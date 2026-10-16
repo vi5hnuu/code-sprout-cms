@@ -1,0 +1,65 @@
+# Local backing services for code-sprout-cms.
+#   make infra-up    → start postgres + redis (add PROFILES="storage search" for the rest)
+#   make infra-down  → stop (data kept in named volumes)
+#
+# Host ports are offset from the defaults so this stack can run next to ls-judge
+# (which binds 5432/6379) without clashing.
+name: code-sprout-cms
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: sprout
+      POSTGRES_PASSWORD: sprout
+      POSTGRES_DB: sprout
+    command: >
+      postgres
+        -c shared_preload_libraries=pg_stat_statements
+        -c pg_stat_statements.track=all
+        -c max_connections=200
+    ports: ["5442:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sprout -d sprout"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports: ["6389:6379"]
+    volumes: [redisdata:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # S3-compatible object storage. SeaweedFS rather than MinIO: MinIO stopped publishing
+  # community container images. The API only speaks the S3 protocol, so any S3 (R2, AWS)
+  # can replace this in production.
+  s3:
+    image: chrislusf/seaweedfs:3.80
+    profiles: [storage]
+    command: ["server", "-s3", "-dir=/data", "-s3.config=/etc/seaweedfs/s3.json"]
+    ports: ["9010:8333"]
+    volumes:
+      - s3data:/data
+      - ./deploy/dev/seaweedfs-s3.json:/etc/seaweedfs/s3.json:ro
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.11
+    profiles: [search]
+    environment:
+      MEILI_MASTER_KEY: sprout-dev-master-key
+      MEILI_NO_ANALYTICS: "true"
+    ports: ["7710:7700"]
+    volumes: [meilidata:/meili_data]
+
+volumes:
+  pgdata:
+  redisdata:
+  s3data:
+  meilidata:
