@@ -1,0 +1,40 @@
+# One generated package per domain: each domain owns its queries, and no package can reach
+# another domain's tables through generated code. Regenerate with `make generate`.
+version: "2"
+sql:
+  - engine: postgresql
+    schema: db/migrations
+    queries: db/queries/user.sql
+    gen:
+      go: &go
+        package: userdb
+        out: internal/user/userdb
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+        emit_empty_slices: true
+        query_parameter_limit: 4
+        omit_unused_structs: true
+        overrides:
+          - db_type: timestamptz
+            go_type: time.Time
+          - db_type: timestamptz
+            nullable: true
+            go_type:
+              type: time.Time
+              pointer: true
+  - engine: postgresql
+    schema: db/migrations
+    queries: db/queries/outbox.sql
+    gen:
+      go:
+        <<: *go
+        package: outboxdb
+        out: internal/outbox/outboxdb
+  - engine: postgresql
+    schema: db/migrations
+    queries: db/queries/maintenance.sql
+    gen:
+      go:
+        <<: *go
+        package: maintenancedb
+        out: internal/maintenance/maintenancedb

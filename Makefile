@@ -10,7 +10,7 @@ endif
 DATABASE_URL ?= postgres://sprout:sprout@localhost:5442/sprout?sslmode=disable
 MIGRATIONS   := db/migrations
 
-.PHONY: build api worker run-api run-worker test lint generate \
+.PHONY: build api worker run-api run-worker test test-db lint generate \
         infra-up infra-down migrate migrate-down migrate-status migration
 
 build: api worker
@@ -29,13 +29,23 @@ run-api:
 run-worker:
 	go run ./cmd/worker
 
-test:
-	go test ./... -race -count=1
+# Integration tests run against a separate database so they never touch dev data.
+TEST_DATABASE_URL ?= postgres://sprout:sprout@localhost:5442/sprout_test?sslmode=disable
+TEST_REDIS_ADDR   ?= localhost:6389
+
+test: test-db
+	TEST_DATABASE_URL="$(TEST_DATABASE_URL)" TEST_REDIS_ADDR="$(TEST_REDIS_ADDR)" go test ./... -race -count=1
+
+test-db:
+	@docker compose -f docker-compose.dev.yml exec -T postgres \
+		psql -U sprout -d sprout -tAc "SELECT 1 FROM pg_database WHERE datname='sprout_test'" | grep -q 1 || \
+		docker compose -f docker-compose.dev.yml exec -T postgres createdb -U sprout sprout_test
+	goose -dir $(MIGRATIONS) postgres "$(TEST_DATABASE_URL)" up >/dev/null
 
 lint:
 	go vet ./...
 
-# sqlc turns db/queries/*.sql into type-safe Go in internal/platform/db/sqlc.
+# sqlc turns db/queries/<domain>.sql into type-safe Go in internal/<domain>/<domain>db.
 generate:
 	sqlc generate
 
