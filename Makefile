@@ -10,7 +10,7 @@ endif
 DATABASE_URL ?= postgres://sprout:sprout@localhost:5442/sprout?sslmode=disable
 MIGRATIONS   := db/migrations
 
-.PHONY: build api worker run-api run-worker test test-db lint generate \
+.PHONY: build api worker run-api run-worker test test-db lint lint-api generate \
         infra-up infra-down migrate migrate-down migrate-status migration
 
 build: api worker
@@ -44,6 +44,10 @@ test-db:
 
 lint:
 	go vet ./...
+
+# The OpenAPI file is the contract the web and Android clients are generated from.
+lint-api:
+	npx -y @redocly/cli@1.25.11 lint api/openapi.yaml
 
 # sqlc turns db/queries/<domain>.sql into type-safe Go in internal/<domain>/<domain>db.
 generate:

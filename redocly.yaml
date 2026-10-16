@@ -1,0 +1,8 @@
+# Lint config for api/openapi.yaml: `npx @redocly/cli lint api/openapi.yaml`
+# Deliberate per-operation exceptions live in .redocly.lint-ignore.yaml.
+extends:
+  - recommended
+rules:
+  info-license: off            # private API
+  no-server-example.com: off   # localhost is the dev server
+  operation-4xx-response: error
