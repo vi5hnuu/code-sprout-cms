@@ -2304,7 +2304,14 @@ components:
       type: object
       required: [anchor, body]
       properties:
-        anchor: { type: object, description: "Where the note points, e.g. a line number or heading id." }
+        anchor:
+          type: object
+          description: "Where the note points: a line of the reviewed revision and/or a heading id."
+          minProperties: 1
+          additionalProperties: true
+          properties:
+            line: { type: integer, minimum: 1 }
+            heading: { type: string }
         body: { type: string }
     ReviewInput:
       type: object
