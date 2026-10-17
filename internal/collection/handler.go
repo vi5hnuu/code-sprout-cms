@@ -26,6 +26,8 @@ func (h *Handler) Routes(mux *http.ServeMux, authed func(http.Handler) http.Hand
 	me("DELETE /v1/me/collections/{id}/items/{contentId}", h.removeItem)
 	me("PUT /v1/me/collections/{id}/order", h.reorder)
 
+	me("GET /v1/studio/collections", h.editorial)
+
 	mux.Handle("GET /v1/public/collections/{kind}/{slug}", httpx.HandlerFunc(h.publicBySlug))
 	mux.Handle("GET /v1/public/lists/{id}", httpx.HandlerFunc(h.view))
 }
@@ -198,5 +200,18 @@ func (h *Handler) view(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	httpx.JSON(w, http.StatusOK, v)
+	return nil
+}
+
+func (h *Handler) editorial(w http.ResponseWriter, r *http.Request) error {
+	req, err := page.Parse[EditorialCursor](r)
+	if err != nil {
+		return err
+	}
+	res, err := h.svc.Editorial(r.Context(), principal(r), Kind(r.URL.Query().Get("kind")), req)
+	if err != nil {
+		return err
+	}
+	httpx.JSON(w, http.StatusOK, res)
 	return nil
 }

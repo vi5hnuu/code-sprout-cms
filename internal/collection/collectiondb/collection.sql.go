@@ -213,6 +213,66 @@ func (q *Queries) InsertItemAt(ctx context.Context, arg InsertItemAtParams) erro
 	return err
 }
 
+const listEditorialCollections = `-- name: ListEditorialCollections :many
+SELECT c.id, c.kind, c.slug, c.title, c.description, c.owner_id, c.visibility, c.created_at, c.updated_at, (SELECT count(*) FROM collection_item i WHERE i.collection_id = c.id)::int AS item_count
+FROM collection c
+WHERE c.kind = $1
+  AND ($2::bigint IS NULL OR c.id < $2)
+ORDER BY c.id DESC
+LIMIT $3
+`
+
+type ListEditorialCollectionsParams struct {
+	Kind     string
+	AfterID  *int64
+	RowLimit int32
+}
+
+type ListEditorialCollectionsRow struct {
+	ID          int64
+	Kind        string
+	Slug        string
+	Title       string
+	Description *string
+	OwnerID     int64
+	Visibility  string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	ItemCount   int32
+}
+
+// Editorial collections of one kind for the studio, newest first (any owner).
+func (q *Queries) ListEditorialCollections(ctx context.Context, arg ListEditorialCollectionsParams) ([]ListEditorialCollectionsRow, error) {
+	rows, err := q.db.Query(ctx, listEditorialCollections, arg.Kind, arg.AfterID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListEditorialCollectionsRow{}
+	for rows.Next() {
+		var i ListEditorialCollectionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.Slug,
+			&i.Title,
+			&i.Description,
+			&i.OwnerID,
+			&i.Visibility,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ItemCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listItems = `-- name: ListItems :many
 SELECT content_id, position FROM collection_item
 WHERE collection_id = $1

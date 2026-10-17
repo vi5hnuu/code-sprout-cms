@@ -302,6 +302,39 @@ func (s *Service) Mine(ctx context.Context, p auth.Principal) ([]Collection, err
 	return out, nil
 }
 
+// EditorialCursor resumes the studio listing of editorial collections.
+type EditorialCursor struct {
+	ID int64 `json:"id"`
+}
+
+// Editorial lists every collection of an editorial kind, whoever created it, for site-wide
+// editors managing study plans, series and courses.
+func (s *Service) Editorial(ctx context.Context, p auth.Principal, kind Kind, req page.Request[EditorialCursor]) (page.Page[Collection], error) {
+	if !kind.editorial() {
+		return page.Page[Collection]{}, apperr.ValidationFailed(map[string]string{"kind": "kind must be SERIES, COURSE or STUDY_PLAN."})
+	}
+	if err := s.policy.Require(ctx, p, access.RoleEditor, nil); err != nil {
+		return page.Page[Collection]{}, err
+	}
+	var after *int64
+	if req.Key != nil {
+		after = &req.Key.ID
+	}
+	rows, err := collectiondb.New(s.db.Primary).ListEditorialCollections(ctx, collectiondb.ListEditorialCollectionsParams{
+		Kind: string(kind), AfterID: after, RowLimit: int32(req.Limit + 1),
+	})
+	if err != nil {
+		return page.Page[Collection]{}, err
+	}
+	out := make([]Collection, len(rows))
+	for i, r := range rows {
+		n := r.ItemCount
+		out[i] = Collection{ID: r.ID, Kind: Kind(r.Kind), Slug: r.Slug, Title: r.Title, Description: r.Description,
+			OwnerID: r.OwnerID, Visibility: r.Visibility, ItemCount: &n, UpdatedAt: r.UpdatedAt}
+	}
+	return page.Build(out, req.Limit, func(c Collection) EditorialCursor { return EditorialCursor{ID: c.ID} }), nil
+}
+
 // Containing lists which of the caller's lists hold an item (for an "add to list" menu).
 func (s *Service) Containing(ctx context.Context, p auth.Principal, contentID int64) ([]int64, error) {
 	return collectiondb.New(s.db.Primary).CollectionsContaining(ctx, collectiondb.CollectionsContainingParams{OwnerID: p.UserID, ContentID: contentID})
@@ -328,7 +361,8 @@ func (s *Service) PublicBySlug(ctx context.Context, kind Kind, slug string, req 
 	return s.view(ctx, c, req)
 }
 
-// View shows a list to its owner, or anyone's PUBLIC/UNLISTED list by id.
+// View shows a list to its owner, or anyone's PUBLIC/UNLISTED list by id. A private editorial
+// collection is also visible to site-wide editors, who maintain them together.
 func (s *Service) View(ctx context.Context, p *auth.Principal, id int64, req page.Request[float64]) (View, error) {
 	c, err := collectiondb.New(s.db.Replica).GetCollection(ctx, id)
 	if db.IsNoRows(err) {
@@ -337,9 +371,17 @@ func (s *Service) View(ctx context.Context, p *auth.Principal, id int64, req pag
 	if err != nil {
 		return View{}, err
 	}
-	owner := p != nil && p.UserID == c.OwnerID
-	if c.Visibility == "PRIVATE" && !owner {
-		return View{}, errNotFound
+	if c.Visibility == "PRIVATE" && (p == nil || p.UserID != c.OwnerID) {
+		if p == nil || !Kind(c.Kind).editorial() {
+			return View{}, errNotFound
+		}
+		editor, err := s.policy.Has(ctx, *p, access.RoleEditor, nil)
+		if err != nil {
+			return View{}, err
+		}
+		if !editor {
+			return View{}, errNotFound
+		}
 	}
 	return s.view(ctx, c, req)
 }

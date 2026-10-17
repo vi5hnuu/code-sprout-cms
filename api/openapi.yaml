@@ -1668,6 +1668,31 @@ paths:
         "400": { $ref: "#/components/responses/Problem" }
         "401": { $ref: "#/components/responses/Problem" }
 
+  /v1/studio/collections:
+    get:
+      tags: [library]
+      operationId: listEditorialCollections
+      summary: Study plans, series or courses of every editor, newest first (site-wide EDITOR).
+      description: Create and edit them through /v1/me/collections with the editorial `kind`.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: kind, in: query, required: true, schema: { type: string, enum: [SERIES, COURSE, STUDY_PLAN] } }
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200":
+          description: Page of collections
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/Collection" } }
+                  nextCursor: { type: [string, "null"] }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
   /v1/me/collections:
     get:
       tags: [library]

@@ -59,3 +59,12 @@ LIMIT sqlc.arg(row_limit);
 SELECT c.id FROM collection c
 JOIN collection_item i ON i.collection_id = c.id
 WHERE c.owner_id = $1 AND c.kind = 'LIST' AND i.content_id = $2;
+
+-- Editorial collections of one kind for the studio, newest first (any owner).
+-- name: ListEditorialCollections :many
+SELECT c.*, (SELECT count(*) FROM collection_item i WHERE i.collection_id = c.id)::int AS item_count
+FROM collection c
+WHERE c.kind = sqlc.arg(kind)
+  AND (sqlc.narg(after_id)::bigint IS NULL OR c.id < sqlc.narg(after_id))
+ORDER BY c.id DESC
+LIMIT sqlc.arg(row_limit);
