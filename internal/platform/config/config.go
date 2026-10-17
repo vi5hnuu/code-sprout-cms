@@ -32,6 +32,14 @@ type Config struct {
 
 	Auth    AuthConfig
 	Storage StorageConfig
+	Judge   JudgeConfig
+}
+
+// JudgeConfig points at ls-judge. Optional: without a URL, running code answers 503 (useful
+// for local work on content features without the judge).
+type JudgeConfig struct {
+	URL    string
+	APIKey string
 }
 
 type StorageConfig struct {
@@ -79,6 +87,8 @@ func Load() (Config, error) {
 			Issuer:   req("AUTH_ISSUER"),
 			Audience: req("AUTH_AUDIENCE"),
 		},
+
+		Judge: JudgeConfig{URL: os.Getenv("JUDGE_URL"), APIKey: os.Getenv("JUDGE_API_KEY")},
 
 		Storage: StorageConfig{
 			Endpoint:      req("STORAGE_ENDPOINT"),

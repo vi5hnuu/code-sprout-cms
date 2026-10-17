@@ -13,12 +13,17 @@ CREATE TABLE problem_ext (
     checker_file_id      bigint  REFERENCES file (id),
     active_test_set_id   bigint,                     -- FK below (test_set references this table)
     editorial_content_id bigint  REFERENCES content (id) ON DELETE SET NULL,
-    -- Counters for acceptance rate; flushed in batches by the worker, never per submission.
+    -- Acceptance counters, updated as each judged submission finalises.
     submission_count     bigint  NOT NULL DEFAULT 0,
     accepted_count       bigint  NOT NULL DEFAULT 0,
+    -- Set while the problem is live and PUBLIC (kept in step by the publish hooks), so
+    -- "newest EASY problems" is one index range scan however many problems exist.
+    listed_at            timestamptz,
     CHECK (checker <> 'CUSTOM' OR checker_file_id IS NOT NULL)
 );
-CREATE INDEX idx_problem_difficulty ON problem_ext (difficulty);
+CREATE INDEX idx_problem_listed ON problem_ext (listed_at DESC, content_id DESC) WHERE listed_at IS NOT NULL;
+CREATE INDEX idx_problem_listed_by_difficulty ON problem_ext (difficulty, listed_at DESC, content_id DESC)
+    WHERE listed_at IS NOT NULL;
 
 CREATE TABLE test_set (
     id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -47,6 +52,8 @@ CREATE TABLE sample_case (
 );
 
 -- Per-language starter code shown in the editor and the hidden driver that wraps it for judging.
+-- A driver contains the placeholder {{USER_CODE}}, replaced by the submission before judging
+-- (function-style problems); without a driver the submission runs as-is (stdin/stdout).
 CREATE TABLE code_template (
     problem_id   bigint      NOT NULL REFERENCES problem_ext (content_id) ON DELETE CASCADE,
     language     text        NOT NULL,

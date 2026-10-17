@@ -17,8 +17,10 @@ import (
 	"code-sprout-cms/internal/access"
 	"code-sprout-cms/internal/asset"
 	"code-sprout-cms/internal/auth"
+	"code-sprout-cms/internal/collection"
 	"code-sprout-cms/internal/content"
 	"code-sprout-cms/internal/engagement"
+	"code-sprout-cms/internal/judge"
 	"code-sprout-cms/internal/library"
 	"code-sprout-cms/internal/platform/apperr"
 	"code-sprout-cms/internal/platform/config"
@@ -26,6 +28,8 @@ import (
 	"code-sprout-cms/internal/platform/httpx"
 	"code-sprout-cms/internal/platform/ratelimit"
 	"code-sprout-cms/internal/platform/storage"
+	"code-sprout-cms/internal/problem"
+	"code-sprout-cms/internal/submission"
 	"code-sprout-cms/internal/taxonomy"
 	"code-sprout-cms/internal/user"
 )
@@ -87,6 +91,16 @@ func run() error {
 		Events:   limiter.Middleware("events", ratelimit.PerMinute(120, 30), clientIP),
 	})
 	library.NewHandler(engagements, reader).Routes(api, auth.RequireUser)
+	library.NewNotes(database, reader).Routes(api, auth.RequireUser)
+	collection.NewHandler(collection.NewService(database, reader, policy)).Routes(api, auth.RequireUser)
+
+	problems := problem.NewService(database, contents, reader, assets, policy)
+	problem.NewHandler(problems).Routes(api, auth.RequireUser)
+	submissions := submission.NewService(database, rdb, judge.New(cfg.Judge.URL, cfg.Judge.APIKey), problems, problems, reader)
+	submission.NewHandler(submissions, clientIP).Routes(api, auth.RequireUser, submission.Limits{
+		Runs:        limiter.Middleware("runs", ratelimit.PerMinute(20, 5), clientIP),
+		Submissions: limiter.Middleware("submissions", ratelimit.PerMinute(10, 3), clientIP),
+	})
 	// Unmatched paths answer in the same problem+json shape as every other error.
 	api.Handle("/", httpx.HandlerFunc(func(http.ResponseWriter, *http.Request) error {
 		return apperr.NotFound("route.not_found", "No such endpoint.")

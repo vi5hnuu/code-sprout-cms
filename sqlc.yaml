@@ -17,6 +17,8 @@ sql:
         overrides:
           - db_type: ltree
             go_type: string
+          - db_type: date
+            go_type: time.Time
           - db_type: timestamptz
             go_type: time.Time
           - db_type: timestamptz
@@ -88,3 +90,35 @@ sql:
         <<: *go
         package: engagementdb
         out: internal/engagement/engagementdb
+  - engine: postgresql
+    schema: db/migrations
+    queries: db/queries/problem.sql
+    gen:
+      go:
+        <<: *go
+        package: problemdb
+        out: internal/problem/problemdb
+  - engine: postgresql
+    schema: db/migrations
+    queries: db/queries/submission.sql
+    gen:
+      go:
+        <<: *go
+        package: submissiondb
+        out: internal/submission/submissiondb
+  - engine: postgresql
+    schema: db/migrations
+    queries: db/queries/library.sql
+    gen:
+      go:
+        <<: *go
+        package: librarydb
+        out: internal/library/librarydb
+  - engine: postgresql
+    schema: db/migrations
+    queries: db/queries/collection.sql
+    gen:
+      go:
+        <<: *go
+        package: collectiondb
+        out: internal/collection/collectiondb

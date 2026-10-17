@@ -1284,6 +1284,40 @@ func (q *Queries) PublishContent(ctx context.Context, arg PublishContentParams) 
 	return i, err
 }
 
+const recentInTag = `-- name: RecentInTag :many
+SELECT content_id FROM content_tag
+WHERE tag_id = $1 AND published_at IS NOT NULL
+ORDER BY published_at DESC, content_id DESC
+LIMIT $2
+`
+
+type RecentInTagParams struct {
+	TagID    int64
+	RowLimit int32
+}
+
+// The most recent live members of one tag; related-item scoring samples each of an item's
+// tags with this, which bounds the cost even for tags with millions of members.
+func (q *Queries) RecentInTag(ctx context.Context, arg RecentInTagParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, recentInTag, arg.TagID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var content_id int64
+		if err := rows.Scan(&content_id); err != nil {
+			return nil, err
+		}
+		items = append(items, content_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const resolveRedirect = `-- name: ResolveRedirect :one
 SELECT c.slug FROM slug_redirect r
 JOIN content c ON c.id = r.content_id

@@ -107,10 +107,3 @@ var fenceAttrs = map[string]attrSpec{
 	"stdin":     {},
 	"highlight": {check: matches(highlightPattern, "line numbers like 1,3-5")},
 }
-
-// RunnableLanguages are the fence languages that may carry `runnable`. Fence names follow the
-// highlighter's names; the run endpoint maps them to judge runtimes and re-checks availability.
-var RunnableLanguages = map[string]bool{
-	"c": true, "cpp": true, "csharp": true, "go": true, "java": true, "javascript": true,
-	"kotlin": true, "python": true, "rust": true, "typescript": true,
-}

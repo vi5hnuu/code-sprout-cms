@@ -273,3 +273,11 @@ SELECT * FROM blog_ext WHERE content_id = $1;
 -- name: ListLiveByIDs :many
 SELECT * FROM content
 WHERE id = ANY (sqlc.arg(ids)::bigint[]) AND status = 'PUBLISHED' AND visibility <> 'PRIVATE' AND deleted_at IS NULL;
+
+-- The most recent live members of one tag; related-item scoring samples each of an item's
+-- tags with this, which bounds the cost even for tags with millions of members.
+-- name: RecentInTag :many
+SELECT content_id FROM content_tag
+WHERE tag_id = sqlc.arg(tag_id) AND published_at IS NOT NULL
+ORDER BY published_at DESC, content_id DESC
+LIMIT sqlc.arg(row_limit);

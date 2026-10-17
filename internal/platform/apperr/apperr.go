@@ -21,6 +21,7 @@ const (
 	KindPreconditionFailed   // stale If-Match: someone else saved first
 	KindPreconditionRequired // If-Match missing on a write that needs it
 	KindRateLimited
+	KindUnavailable // a dependency (e.g. the code judge) is down; retry later
 )
 
 type Error struct {

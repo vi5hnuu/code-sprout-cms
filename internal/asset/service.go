@@ -406,3 +406,38 @@ func (s *Service) Describe(ctx context.Context, ids []int64) (map[int64]File, er
 func ConfigFrom(c config.StorageConfig) Config {
 	return Config{PublicBucket: c.PublicBucket, PrivateBucket: c.PrivateBucket, PublicBaseURL: c.PublicBaseURL}
 }
+
+// Stored is a READY file with the details other domains need to trust it: who uploaded it and
+// its verified checksum. It is for server-side use and never serialised to clients.
+type Stored struct {
+	File
+	OwnerID *int64
+	SHA256  []byte
+}
+
+var errNotReady = apperr.NotFound("upload.not_found", "No such verified upload.")
+
+// Stored returns a READY file's server-side details.
+func (s *Service) Stored(ctx context.Context, id int64) (Stored, error) {
+	f, err := assetdb.New(s.db.Primary).GetFile(ctx, id)
+	if db.IsNoRows(err) || (err == nil && Status(f.Status) != StatusReady) {
+		return Stored{}, errNotReady
+	}
+	if err != nil {
+		return Stored{}, err
+	}
+	return Stored{File: s.view(f), OwnerID: f.OwnerID, SHA256: f.Sha256}, nil
+}
+
+// Open streams a READY file, public or private, for server-side processing (e.g. parsing a
+// test set). The caller must close the reader.
+func (s *Service) Open(ctx context.Context, id int64) (io.ReadCloser, error) {
+	f, err := assetdb.New(s.db.Primary).GetFile(ctx, id)
+	if db.IsNoRows(err) || (err == nil && Status(f.Status) != StatusReady) {
+		return nil, errNotReady
+	}
+	if err != nil {
+		return nil, err
+	}
+	return s.store.Open(ctx, f.Bucket, f.StorageKey, 0)
+}

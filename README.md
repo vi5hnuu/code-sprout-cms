@@ -30,6 +30,10 @@ CDN ─► Next.js (ISR) ─► cmd/api ─► Postgres primary ─► replica (
 - **Files never pass through the API.** Clients PUT to presigned URLs. Storage that verifies
   checksums (S3, R2) proves the bytes at upload; otherwise the API hashes small files and the
   worker hashes large ones. Private files (test sets) live in a separate bucket with no URL.
+- **Code runs on ls-judge** (`WebstormProjects/ls-judge`), called service-to-service with one
+  API key (`JUDGE_URL`, `JUDGE_API_KEY`); browsers never reach the judge. Runs relay results
+  through `/v1/run/{id}` (owner checked in Redis). Submissions are queued, split into judge jobs of
+  ≤100 cases sent in idempotent batches of ≤20, and judged by the worker.
 - **Engagement tables are hash-partitioned** by `content_id` or `user_id`, the key every query
   carries. Those are also the distribution columns if we ever shard with Citus.
 

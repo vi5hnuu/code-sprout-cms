@@ -18,11 +18,14 @@ import (
 	"code-sprout-cms/internal/asset"
 	"code-sprout-cms/internal/content"
 	"code-sprout-cms/internal/engagement"
+	"code-sprout-cms/internal/judge"
 	"code-sprout-cms/internal/maintenance"
 	"code-sprout-cms/internal/outbox"
 	"code-sprout-cms/internal/platform/config"
 	"code-sprout-cms/internal/platform/db"
 	"code-sprout-cms/internal/platform/storage"
+	"code-sprout-cms/internal/problem"
+	"code-sprout-cms/internal/submission"
 	"code-sprout-cms/internal/taxonomy"
 	"code-sprout-cms/internal/user"
 )
@@ -64,6 +67,9 @@ func run() error {
 	users := user.NewService(database.Primary, database.Replica, assets)
 	reader := content.NewReader(database, assets, taxonomies, users, engagement.NewStatsReader(database))
 	engagements := engagement.NewService(database, rdb, reader, users, policy)
+	// Registers the PROBLEM publish hooks so scheduled problems publish correctly here too.
+	problems := problem.NewService(database, contents, reader, assets, policy)
+	submissions := submission.NewService(database, rdb, judge.New(cfg.Judge.URL, cfg.Judge.APIKey), problems, problems, reader)
 
 	var wg sync.WaitGroup
 	wg.Go(func() { dispatcher.Run(ctx) })
@@ -71,6 +77,7 @@ func run() error {
 	wg.Go(func() { assets.RunVerifier(ctx, 5*time.Second) })
 	wg.Go(func() { contents.RunScheduler(ctx, 30*time.Second) })
 	wg.Go(func() { engagements.RunCounterFlusher(ctx, 30*time.Second) })
+	wg.Go(func() { submissions.RunQueue(ctx, time.Second) })
 
 	slog.Info("worker started")
 	wg.Wait()

@@ -39,6 +39,7 @@ type Service struct {
 	policy   *access.Policy
 	assets   Assets
 	taxonomy Taxonomy
+	hooks    map[Type]TypeHooks
 }
 
 func NewService(d *db.DB, policy *access.Policy, assets Assets, tax Taxonomy) *Service {
@@ -47,8 +48,15 @@ func NewService(d *db.DB, policy *access.Policy, assets Assets, tax Taxonomy) *S
 
 var errNotFound = apperr.NotFound("content.not_found", "No such content.")
 
-// Create starts a new item with its first draft revision.
+// Create starts a new article, blog or topic page with its first draft revision.
 func (s *Service) Create(ctx context.Context, p auth.Principal, in CreateInput) (Draft, error) {
+	if !studioTypes[in.Type] {
+		return Draft{}, apperr.ValidationFailed(map[string]string{"type": "type must be ARTICLE, BLOG or TOPIC_PAGE."})
+	}
+	return s.create(ctx, p, in, nil)
+}
+
+func (s *Service) create(ctx context.Context, p auth.Principal, in CreateInput, ext func(ctx context.Context, tx pgx.Tx, id int64) error) (Draft, error) {
 	if err := access.RequireAuthor(p); err != nil {
 		return Draft{}, err
 	}
@@ -82,6 +90,11 @@ func (s *Service) Create(ctx context.Context, p auth.Principal, in CreateInput) 
 		}
 		if err := q.InsertStats(ctx, id); err != nil {
 			return err
+		}
+		if ext != nil {
+			if err := ext(ctx, tx, id); err != nil {
+				return err
+			}
 		}
 		return audit.Record(ctx, tx, audit.Entry{ActorID: p.UserID, Action: "content.create", Entity: "content", EntityID: id,
 			Data: map[string]any{"type": in.Type, "slug": in.Slug}})

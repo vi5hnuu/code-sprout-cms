@@ -74,6 +74,7 @@ var kindStatus = map[apperr.Kind]int{
 	apperr.KindPreconditionFailed:   http.StatusPreconditionFailed,
 	apperr.KindPreconditionRequired: http.StatusPreconditionRequired,
 	apperr.KindRateLimited:          http.StatusTooManyRequests,
+	apperr.KindUnavailable:          http.StatusServiceUnavailable,
 }
 
 // Error renders err as problem+json. Domain errors keep their code and detail; anything else

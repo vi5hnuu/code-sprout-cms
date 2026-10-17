@@ -37,6 +37,12 @@ tags:
     description: Public pages and listings (cacheable; identical for every reader).
   - name: engagement
     description: Likes, bookmarks, comments, shares and views.
+  - name: problems
+    description: Practice problems, their judging setup, and the problem of the day.
+  - name: judging
+    description: Running code, submissions, progress and stats (executed by ls-judge).
+  - name: library
+    description: A reader's notes and collections.
   - name: taxonomy
     description: Category tree (site sections) and tags.
   - name: studio
@@ -1099,6 +1105,646 @@ paths:
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
 
+  /v1/studio/problems:
+    post:
+      tags: [problems]
+      operationId: createProblem
+      summary: Start a problem (statement draft + judging limits).
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateProblem" }
+      responses:
+        "201": { $ref: "#/components/responses/Draft" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /v1/studio/problems/{id}:
+    parameters: [{ $ref: "#/components/parameters/ID" }]
+    get:
+      tags: [problems]
+      operationId: getProblemStudio
+      summary: Judging setup (settings, samples, templates with drivers, hints, test sets).
+      description: Authors edit this while the problem was never published; afterwards editors only.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/ProblemStudio" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /v1/studio/problems/{id}/settings:
+    parameters: [{ $ref: "#/components/parameters/ID" }]
+    put:
+      tags: [problems]
+      operationId: updateProblemSettings
+      summary: Difficulty, limits, checker and editorial link.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProblemSettings" }
+      responses:
+        "200": { $ref: "#/components/responses/ProblemStudio" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /v1/studio/problems/{id}/samples:
+    parameters: [{ $ref: "#/components/parameters/ID" }]
+    put:
+      tags: [problems]
+      operationId: replaceSamples
+      summary: Replace the statement's examples (at most 10).
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [samples]
+              properties:
+                samples: { type: array, maxItems: 10, items: { $ref: "#/components/schemas/Sample" } }
+      responses:
+        "200": { $ref: "#/components/responses/ProblemStudio" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /v1/studio/problems/{id}/templates/{language}:
+    parameters:
+      - { $ref: "#/components/parameters/ID" }
+      - { name: language, in: path, required: true, schema: { $ref: "#/components/schemas/Language" } }
+    put:
+      tags: [problems]
+      operationId: putTemplate
+      summary: Starter code and optional hidden driver for one language.
+      description: "A driver must contain `{{USER_CODE}}` exactly once; the submission is spliced in there before judging."
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [starterCode]
+              properties:
+                starterCode: { type: string, maxLength: 65536 }
+                driverCode: { type: [string, "null"], maxLength: 65536 }
+      responses:
+        "200": { $ref: "#/components/responses/ProblemStudio" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+    delete:
+      tags: [problems]
+      operationId: deleteTemplate
+      summary: Remove a language's template.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/ProblemStudio" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /v1/studio/problems/{id}/hints:
+    parameters: [{ $ref: "#/components/parameters/ID" }]
+    put:
+      tags: [problems]
+      operationId: replaceHints
+      summary: Replace the hints, in reveal order (at most 10).
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [hints]
+              properties:
+                hints: { type: array, maxItems: 10, items: { type: string, maxLength: 8192 } }
+      responses:
+        "200": { $ref: "#/components/responses/ProblemStudio" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /v1/studio/problems/{id}/test-sets:
+    parameters: [{ $ref: "#/components/parameters/ID" }]
+    post:
+      tags: [problems]
+      operationId: addTestSet
+      summary: Make an uploaded NDJSON test file the next (active) test set version.
+      description: 'One `{"input": "...", "output": "..."}` per line, up to 100,000 cases. Upload it first as a TEST_SET file; it is validated in full here.'
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fileId]
+              properties:
+                fileId: { type: integer, format: int64 }
+      responses:
+        "200": { $ref: "#/components/responses/ProblemStudio" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /v1/studio/problems/{id}/test-sets/{version}/activate:
+    parameters:
+      - { $ref: "#/components/parameters/ID" }
+      - { name: version, in: path, required: true, schema: { type: integer, minimum: 1 } }
+    post:
+      tags: [problems]
+      operationId: activateTestSet
+      summary: Switch back to an earlier test set version.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/ProblemStudio" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /v1/admin/problem-of-the-day/{date}:
+    parameters:
+      - { name: date, in: path, required: true, schema: { type: string, format: date } }
+    put:
+      tags: [problems]
+      operationId: scheduleProblemOfTheDay
+      summary: Set the problem of the day (UTC date; site-wide EDITOR).
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [problemId]
+              properties:
+                problemId: { type: integer, format: int64 }
+      responses:
+        "204": { description: Scheduled }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+  /v1/public/problems:
+    get:
+      tags: [problems]
+      operationId: listProblems
+      summary: Live public problems, newest first.
+      description: A tag listing filtered by difficulty may return short pages; keep following nextCursor.
+      security: []
+      parameters:
+        - { name: difficulty, in: query, schema: { $ref: "#/components/schemas/Difficulty" } }
+        - { name: tag, in: query, description: "kind:slug", schema: { type: string } }
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200":
+          description: Page of problems
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/ProblemListItem" } }
+                  nextCursor: { type: [string, "null"] }
+        "400": { $ref: "#/components/responses/Problem" }
+  /v1/public/problems/{slug}:
+    get:
+      tags: [problems]
+      operationId: getProblemPage
+      summary: A problem statement with samples, starter code and acceptance stats.
+      security: []
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string } }
+        - { name: locale, in: query, schema: { type: string, default: en } }
+      responses:
+        "200":
+          description: Problem page
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProblemPage" }
+        "301": { description: Renamed; see Location }
+        "404": { $ref: "#/components/responses/Problem" }
+  /v1/public/problems/{id}/hints:
+    get:
+      tags: [problems]
+      operationId: getHints
+      summary: Hints in reveal order (fetched separately so the page does not ship them).
+      security: []
+      parameters: [{ $ref: "#/components/parameters/ID" }]
+      responses:
+        "200":
+          description: Hints
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { type: string } }
+        "404": { $ref: "#/components/responses/Problem" }
+  /v1/public/problem-of-the-day:
+    get:
+      tags: [problems]
+      operationId: getProblemOfTheDay
+      summary: Today's problem (UTC).
+      security: []
+      responses:
+        "200":
+          description: Problem
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProblemListItem" }
+        "404": { $ref: "#/components/responses/Problem" }
+
+  /v1/run:
+    post:
+      tags: [judging]
+      operationId: runSnippet
+      summary: Run a code snippet (articles, playground). Anonymous allowed, rate limited.
+      security: [{}, { bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [language, code]
+              additionalProperties: false
+              properties:
+                language: { $ref: "#/components/schemas/Language" }
+                code: { type: string, maxLength: 65536 }
+                stdin: { type: string, maxLength: 65536 }
+      responses:
+        "202": { $ref: "#/components/responses/RunTicket" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /v1/run/{runId}:
+    get:
+      tags: [judging]
+      operationId: getRunResult
+      summary: Poll a run you started (kept 15 minutes).
+      security: [{}, { bearerAuth: [] }]
+      parameters:
+        - { name: runId, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Progress or result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RunResult" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /v1/problems/{id}/run:
+    parameters: [{ $ref: "#/components/parameters/ID" }]
+    post:
+      tags: [judging]
+      operationId: runProblem
+      summary: Run code on the problem's samples, or on custom input. Nothing is recorded.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [language, code]
+              additionalProperties: false
+              properties:
+                language: { $ref: "#/components/schemas/Language" }
+                code: { type: string, maxLength: 65536 }
+                input: { type: [string, "null"], description: Custom stdin; omit to run the samples. }
+      responses:
+        "202": { $ref: "#/components/responses/RunTicket" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /v1/me/submissions:
+    post:
+      tags: [judging]
+      operationId: submitSolution
+      summary: Submit for judging against the hidden tests; poll GET until status is DONE.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [problemId, language, code]
+              additionalProperties: false
+              properties:
+                problemId: { type: integer, format: int64 }
+                language: { $ref: "#/components/schemas/Language" }
+                code: { type: string, maxLength: 65536 }
+      responses:
+        "202":
+          description: Queued
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Submission" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+    get:
+      tags: [judging]
+      operationId: listSubmissions
+      summary: Your submissions, newest first (code omitted), optionally for one problem.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: problemId, in: query, schema: { type: integer, format: int64 } }
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200":
+          description: Page of submissions
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/Submission" } }
+                  nextCursor: { type: [string, "null"] }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+  /v1/me/submissions/{id}:
+    parameters: [{ $ref: "#/components/parameters/ID" }]
+    get:
+      tags: [judging]
+      operationId: getSubmission
+      summary: One of your submissions, with its code and verdict.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Submission
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Submission" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /v1/me/problem-state:
+    get:
+      tags: [judging]
+      operationId: getProblemState
+      summary: Attempted / solved for up to 100 problems.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: ids, in: query, required: true, schema: { type: string }, example: "12,40" }
+      responses:
+        "200":
+          description: State by problem id
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: object
+                    additionalProperties:
+                      type: object
+                      required: [attempted, solved]
+                      properties:
+                        attempted: { type: boolean }
+                        solved: { type: boolean }
+                        solvedAt: { type: string, format: date-time }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+  /v1/me/solved:
+    get:
+      tags: [judging]
+      operationId: listSolved
+      summary: Problems you solved, most recent first.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200":
+          description: Page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [problemId, solvedAt]
+                      properties:
+                        problemId: { type: integer, format: int64 }
+                        solvedAt: { type: string, format: date-time }
+                  nextCursor: { type: [string, "null"] }
+        "401": { $ref: "#/components/responses/Problem" }
+  /v1/me/stats:
+    get:
+      tags: [judging]
+      operationId: getMyStats
+      summary: Solved counts, streaks, a year of activity and languages.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Stats
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserStats" }
+        "401": { $ref: "#/components/responses/Problem" }
+
+  /v1/me/notes:
+    get:
+      tags: [library]
+      operationId: listNotes
+      summary: Items you have notes on, most recently edited first.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200": { $ref: "#/components/responses/SavedPage" }
+        "401": { $ref: "#/components/responses/Problem" }
+  /v1/me/notes/{contentId}:
+    parameters: [{ $ref: "#/components/parameters/ContentID" }]
+    get:
+      tags: [library]
+      operationId: getNote
+      summary: Your private note on an item.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Note
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Note" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+    put:
+      tags: [library]
+      operationId: putNote
+      summary: Save your note; an empty body deletes it (204).
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body: { type: string, maxLength: 65536 }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Note" }
+        "204": { description: Deleted }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+
+  /v1/me/collections:
+    get:
+      tags: [library]
+      operationId: listMyCollections
+      summary: Your lists; `containing` narrows to the lists that hold an item.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: containing, in: query, schema: { type: integer, format: int64 } }
+      responses:
+        "200":
+          description: Lists
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/Collection" } }
+        "401": { $ref: "#/components/responses/Problem" }
+    post:
+      tags: [library]
+      operationId: createCollection
+      summary: Create a list (any reader) or an editorial series/course/study plan (site-wide EDITOR).
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CollectionInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Collection" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /v1/me/collections/{id}:
+    parameters: [{ $ref: "#/components/parameters/ID" }]
+    put:
+      tags: [library]
+      operationId: updateCollection
+      summary: Rename, describe or change visibility.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CollectionInput" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Collection" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+    delete:
+      tags: [library]
+      operationId: deleteCollection
+      summary: Delete a collection.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/Problem" }
+  /v1/me/collections/{id}/items/{contentId}:
+    parameters:
+      - { $ref: "#/components/parameters/ID" }
+      - { $ref: "#/components/parameters/ContentID" }
+    put:
+      tags: [library]
+      operationId: addCollectionItem
+      summary: Append a live item (idempotent).
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Added }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+    delete:
+      tags: [library]
+      operationId: removeCollectionItem
+      summary: Remove an item.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Removed }
+        "404": { $ref: "#/components/responses/Problem" }
+  /v1/me/collections/{id}/order:
+    parameters: [{ $ref: "#/components/parameters/ID" }]
+    put:
+      tags: [library]
+      operationId: reorderCollection
+      summary: Set the full order; list every current item exactly once.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [contentIds]
+              properties:
+                contentIds: { type: array, items: { type: integer, format: int64 } }
+      responses:
+        "204": { description: Reordered }
+        "400": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /v1/public/collections/{kind}/{slug}:
+    get:
+      tags: [library]
+      operationId: getEditorialCollection
+      summary: A public series, course or study plan with its items in order.
+      security: []
+      parameters:
+        - { name: kind, in: path, required: true, schema: { type: string, enum: [series, course, study_plan] } }
+        - { name: slug, in: path, required: true, schema: { type: string } }
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200": { $ref: "#/components/responses/CollectionView" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /v1/public/lists/{id}:
+    get:
+      tags: [library]
+      operationId: getList
+      summary: A reader's list (public/unlisted, or your own private list when signed in).
+      security: [{}, { bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/ID" }
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200": { $ref: "#/components/responses/CollectionView" }
+        "404": { $ref: "#/components/responses/Problem" }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1145,6 +1791,33 @@ components:
       schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
 
   responses:
+    ProblemStudio:
+      description: The problem's judging setup
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ProblemStudio" }
+    RunTicket:
+      description: Started; poll GET /v1/run/{runId}
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [runId, pollAfterMs]
+            properties:
+              runId: { type: string }
+              pollAfterMs: { type: integer }
+    CollectionView:
+      description: Collection with a page of items
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Collection"
+              - type: object
+                required: [items, nextCursor]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/ListItem" } }
+                  nextCursor: { type: [string, "null"] }
     SavedPage:
       description: Page of saved items
       content:
@@ -1694,3 +2367,179 @@ components:
         commentAuthorId: { type: integer, format: int64 }
         commentStatus: { type: string }
         createdAt: { type: string, format: date-time }
+
+    Language: { type: string, enum: [c, cpp, csharp, go, java, javascript, kotlin, python, rust, typescript] }
+    Difficulty: { type: string, enum: [EASY, MEDIUM, HARD] }
+    Verdict: { type: string, enum: [AC, WA, TLE, MLE, RE, CE, IE] }
+    CreateProblem:
+      allOf:
+        - $ref: "#/components/schemas/DraftInput"
+        - type: object
+          required: [difficulty]
+          properties:
+            difficulty: { $ref: "#/components/schemas/Difficulty" }
+            timeLimitMs: { type: integer, minimum: 100, maximum: 30000, default: 2000 }
+            memoryMb: { type: integer, minimum: 16, maximum: 1024, default: 256 }
+    ProblemSettings:
+      type: object
+      required: [difficulty, timeLimitMs, memoryMb]
+      properties:
+        difficulty: { $ref: "#/components/schemas/Difficulty" }
+        timeLimitMs: { type: integer, minimum: 100, maximum: 30000 }
+        memoryMb: { type: integer, minimum: 16, maximum: 1024 }
+        checker: { type: string, enum: [EXACT, TOKEN, FLOAT], default: EXACT }
+        checkerFileId: { type: [integer, "null"], format: int64 }
+        editorialContentId: { type: [integer, "null"], format: int64 }
+    Sample:
+      type: object
+      required: [input, output]
+      properties:
+        input: { type: string, maxLength: 16384 }
+        output: { type: string, maxLength: 16384 }
+        explanation: { type: [string, "null"] }
+    ProblemStudio:
+      type: object
+      required: [contentId, settings, samples, templates, hints, testSets]
+      properties:
+        contentId: { type: integer, format: int64 }
+        settings: { $ref: "#/components/schemas/ProblemSettings" }
+        samples: { type: array, items: { $ref: "#/components/schemas/Sample" } }
+        templates:
+          type: array
+          items:
+            type: object
+            required: [language, starterCode]
+            properties:
+              language: { $ref: "#/components/schemas/Language" }
+              starterCode: { type: string }
+              driverCode: { type: [string, "null"] }
+        hints: { type: array, items: { type: string } }
+        testSets:
+          type: array
+          items:
+            type: object
+            required: [id, version, fileId, caseCount, bytes, active, createdAt]
+            properties:
+              id: { type: integer, format: int64 }
+              version: { type: integer }
+              fileId: { type: integer, format: int64 }
+              caseCount: { type: integer }
+              bytes: { type: integer, format: int64 }
+              active: { type: boolean }
+              createdAt: { type: string, format: date-time }
+    ProblemDetail:
+      type: object
+      required: [difficulty, timeLimitMs, memoryMb, samples, templates, hintCount, editorialContentId, submissionCount, acceptedCount, acceptanceRate]
+      properties:
+        difficulty: { $ref: "#/components/schemas/Difficulty" }
+        timeLimitMs: { type: integer }
+        memoryMb: { type: integer }
+        samples: { type: array, items: { $ref: "#/components/schemas/Sample" } }
+        templates:
+          type: array
+          items:
+            type: object
+            required: [language, starterCode]
+            properties:
+              language: { $ref: "#/components/schemas/Language" }
+              starterCode: { type: string }
+        hintCount: { type: integer }
+        editorialContentId: { type: [integer, "null"], format: int64 }
+        submissionCount: { type: integer, format: int64 }
+        acceptedCount: { type: integer, format: int64 }
+        acceptanceRate: { type: [number, "null"], minimum: 0, maximum: 1 }
+    ProblemPage:
+      allOf:
+        - $ref: "#/components/schemas/PublicPage"
+        - type: object
+          required: [problem]
+          properties:
+            problem: { $ref: "#/components/schemas/ProblemDetail" }
+    ProblemListItem:
+      allOf:
+        - $ref: "#/components/schemas/ListItem"
+        - type: object
+          required: [difficulty, acceptanceRate]
+          properties:
+            difficulty: { $ref: "#/components/schemas/Difficulty" }
+            acceptanceRate: { type: [number, "null"] }
+    RunResult:
+      type: object
+      required: [status, done, cases]
+      properties:
+        status: { type: string, enum: [pending, running, done, failed] }
+        done: { type: boolean }
+        cases:
+          type: array
+          items:
+            type: object
+            required: [index, verdict]
+            properties:
+              index: { type: integer }
+              verdict: { type: string, description: "A judge verdict, or OK for free-form runs that ran without error." }
+              stdout: { type: [string, "null"] }
+              stderr: { type: [string, "null"] }
+              timeMs: { type: [integer, "null"] }
+    Submission:
+      type: object
+      required: [id, problemId, language, status, verdict, passed, total, timeMs, createdAt, finishedAt]
+      properties:
+        id: { type: integer, format: int64 }
+        problemId: { type: integer, format: int64 }
+        language: { $ref: "#/components/schemas/Language" }
+        code: { type: string, description: Only on single fetch. }
+        status: { type: string, enum: [QUEUED, RUNNING, DONE, FAILED] }
+        verdict:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/Verdict"
+        passed: { type: integer }
+        total: { type: integer }
+        timeMs: { type: [integer, "null"] }
+        failedIndex: { type: integer, description: "0-based; present only when the failing case is a sample." }
+        message: { type: string, description: Compiler output or why it could not be judged. }
+        createdAt: { type: string, format: date-time }
+        finishedAt: { type: [string, "null"], format: date-time }
+    UserStats:
+      type: object
+      required: [totalSolved, easySolved, mediumSolved, hardSolved, totalSubmissions, currentStreak, longestStreak, activity, languageBreakdown]
+      properties:
+        totalSolved: { type: integer }
+        easySolved: { type: integer }
+        mediumSolved: { type: integer }
+        hardSolved: { type: integer }
+        totalSubmissions: { type: integer, format: int64 }
+        currentStreak: { type: integer, description: Consecutive days with a submission ending today or yesterday. }
+        longestStreak: { type: integer }
+        activity: { type: object, additionalProperties: { type: integer }, description: "YYYY-MM-DD → submissions, last 365 days." }
+        languageBreakdown: { type: object, additionalProperties: { type: integer }, description: Language → problems solved in it. }
+    Note:
+      type: object
+      required: [contentId, body, updatedAt]
+      properties:
+        contentId: { type: integer, format: int64 }
+        body: { type: string }
+        updatedAt: { type: string, format: date-time }
+    CollectionInput:
+      type: object
+      required: [title]
+      additionalProperties: false
+      properties:
+        kind: { type: string, enum: [LIST, SERIES, COURSE, STUDY_PLAN], default: LIST }
+        slug: { type: string }
+        title: { type: string, maxLength: 120 }
+        description: { type: [string, "null"], maxLength: 1000 }
+        visibility: { type: string, enum: [PUBLIC, UNLISTED, PRIVATE], default: PRIVATE }
+    Collection:
+      type: object
+      required: [id, kind, slug, title, description, ownerId, visibility, updatedAt]
+      properties:
+        id: { type: integer, format: int64 }
+        kind: { type: string, enum: [LIST, SERIES, COURSE, STUDY_PLAN] }
+        slug: { type: string }
+        title: { type: string }
+        description: { type: [string, "null"] }
+        ownerId: { type: integer, format: int64 }
+        visibility: { type: string, enum: [PUBLIC, UNLISTED, PRIVATE] }
+        itemCount: { type: integer }
+        updatedAt: { type: string, format: date-time }

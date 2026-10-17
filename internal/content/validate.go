@@ -140,9 +140,6 @@ func validateDraft(in DraftInput) error {
 
 func validateCreate(in CreateInput) error {
 	f := map[string]string{}
-	if !studioTypes[in.Type] {
-		f["type"] = "type must be ARTICLE, BLOG or TOPIC_PAGE."
-	}
 	if !localePattern.MatchString(in.Locale) {
 		f["locale"] = "locale must look like en or pt-BR."
 	}

@@ -22,6 +22,8 @@ import (
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
 	"github.com/yuin/goldmark/text"
+
+	"code-sprout-cms/internal/platform/langs"
 )
 
 const (
@@ -212,8 +214,8 @@ func (w *walker) fence(f *ast.FencedCodeBlock) {
 		}
 	}
 	if attrs["runnable"] == "true" {
-		if !RunnableLanguages[lang] {
-			w.issue(f, "code.not_runnable", "Language %q cannot be run; runnable languages: %s.", lang, joinKeys(RunnableLanguages))
+		if !langs.Runnable(lang) {
+			w.issue(f, "code.not_runnable", "Language %q cannot be run; runnable languages: %s.", lang, langs.List())
 			return
 		}
 		w.a.Snippets = append(w.a.Snippets, Snippet{Line: w.lineOf(f), Language: lang})

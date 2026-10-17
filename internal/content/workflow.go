@@ -1,10 +1,12 @@
 package content
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -48,7 +50,7 @@ func (s *Service) Submit(ctx context.Context, p auth.Principal, id int64) (Draft
 		if c.PublishedRevNo != nil && *c.PublishedRevNo == c.DraftRevNo && Status(c.Status) == StatusPublished {
 			return invalidState("There are no changes to review.")
 		}
-		if _, err := s.checkPublishable(ctx, q, c, meta, body); err != nil {
+		if _, err := s.checkPublishable(ctx, tx, q, c, meta, body); err != nil {
 			return err
 		}
 		return s.setReview(ctx, tx, q, p.UserID, c, ReviewInReview, nil, "content.submit")
@@ -142,7 +144,7 @@ func (s *Service) Schedule(ctx context.Context, p auth.Principal, id int64, in S
 		if rs := ReviewState(c.ReviewState); rs != ReviewApproved && rs != ReviewScheduled {
 			return invalidState("Only approved drafts can be scheduled.")
 		}
-		if _, err := s.checkPublishable(ctx, q, c, meta, body); err != nil {
+		if _, err := s.checkPublishable(ctx, tx, q, c, meta, body); err != nil {
 			return err
 		}
 		return s.setReview(ctx, tx, q, p.UserID, c, ReviewScheduled, &in.At, "content.schedule")
@@ -162,6 +164,9 @@ func (s *Service) Archive(ctx context.Context, p auth.Principal, id int64) (Draf
 			return err
 		}
 		if err := q.SetContentTagsPublishedAt(ctx, contentdb.SetContentTagsPublishedAtParams{ContentID: c.ID}); err != nil {
+			return err
+		}
+		if err := s.onUnpublish(ctx, tx, c); err != nil {
 			return err
 		}
 		return s.recordLive(ctx, tx, p.UserID, c, "content.archive", outbox.TopicContentUnpublished, "")
@@ -190,6 +195,9 @@ func (s *Service) Delete(ctx context.Context, p auth.Principal, id int64) error 
 			return err
 		}
 		if Status(c.Status) == StatusPublished {
+			if err := s.onUnpublish(ctx, tx, c); err != nil {
+				return err
+			}
 			return s.recordLive(ctx, tx, p.UserID, c, "content.delete", outbox.TopicContentUnpublished, "")
 		}
 		return audit.Record(ctx, tx, audit.Entry{ActorID: p.UserID, Action: "content.delete", Entity: "content", EntityID: c.ID})
@@ -291,7 +299,7 @@ func (s *Service) setReview(ctx context.Context, tx pgx.Tx, q *contentdb.Queries
 }
 
 // checkPublishable runs every rule a live page must satisfy and reports all failures at once.
-func (s *Service) checkPublishable(ctx context.Context, q *contentdb.Queries, c contentdb.Content, meta Meta, body string) (*publishPlan, error) {
+func (s *Service) checkPublishable(ctx context.Context, tx pgx.Tx, q *contentdb.Queries, c contentdb.Content, meta Meta, body string) (*publishPlan, error) {
 	a := markdown.Analyze([]byte(body))
 	issues := append(metaIssues(meta), bodyIssues(a)...)
 
@@ -334,6 +342,12 @@ func (s *Service) checkPublishable(ctx context.Context, q *contentdb.Queries, c 
 		}
 	}
 
+	typeIssues, err := s.typeIssues(ctx, tx, c)
+	if err != nil {
+		return nil, err
+	}
+	issues = append(issues, typeIssues...)
+
 	if len(issues) > 0 {
 		return nil, notPublishable(issues)
 	}
@@ -350,7 +364,7 @@ type publishPlan struct {
 // assets, tags, practice links, type fields, redirects, then the event that tells caches,
 // search and sitemaps. actor 0 = the scheduler.
 func (s *Service) publishLocked(ctx context.Context, tx pgx.Tx, q *contentdb.Queries, actor int64, c contentdb.Content, meta Meta, body string) error {
-	plan, err := s.checkPublishable(ctx, q, c, meta, body)
+	plan, err := s.checkPublishable(ctx, tx, q, c, meta, body)
 	if err != nil {
 		return err
 	}
@@ -403,7 +417,20 @@ func (s *Service) publishLocked(ctx context.Context, tx pgx.Tx, q *contentdb.Que
 	if err := q.InsertLinks(ctx, contentdb.InsertLinksParams{FromID: c.ID, Kind: "PRACTICE", ToIds: plan.problemIDs}); err != nil {
 		return err
 	}
+	related, err := relatedIDs(ctx, q, c.ID, Type(c.Type), meta.TagIDs)
+	if err != nil {
+		return err
+	}
+	if err := q.DeleteLinksOfKind(ctx, contentdb.DeleteLinksOfKindParams{FromID: c.ID, Kind: "RELATED"}); err != nil {
+		return err
+	}
+	if err := q.InsertLinks(ctx, contentdb.InsertLinksParams{FromID: c.ID, Kind: "RELATED", ToIds: related}); err != nil {
+		return err
+	}
 	if err := writeTypeFields(ctx, q, c.ID, meta); err != nil {
+		return err
+	}
+	if err := s.onPublish(ctx, tx, live, meta.TagIDs); err != nil {
 		return err
 	}
 
@@ -463,4 +490,54 @@ func (s *Service) Reviews(ctx context.Context, p auth.Principal, id int64) ([]Re
 		byID[n.ReviewID].Notes = append(byID[n.ReviewID].Notes, ReviewNote{Anchor: anchor, Body: n.Body})
 	}
 	return out, nil
+}
+
+const (
+	relatedPerTagSample = 200
+	maxRelated          = 5
+)
+
+// relatedIDs picks up to five live items of the same type that share the most tags. Each tag
+// contributes only its most recent members, so the cost stays bounded for huge tags; ties go
+// to the newer item. Computed at publish (not per page view) and stored as RELATED links.
+func relatedIDs(ctx context.Context, q *contentdb.Queries, id int64, t Type, tagIDs []int64) ([]int64, error) {
+	overlap := map[int64]int{}
+	for _, tag := range tagIDs {
+		members, err := q.RecentInTag(ctx, contentdb.RecentInTagParams{TagID: tag, RowLimit: relatedPerTagSample})
+		if err != nil {
+			return nil, err
+		}
+		for _, m := range members {
+			if m != id {
+				overlap[m]++
+			}
+		}
+	}
+	if len(overlap) == 0 {
+		return []int64{}, nil
+	}
+	candidates := make([]int64, 0, len(overlap))
+	for cid := range overlap {
+		candidates = append(candidates, cid)
+	}
+	live, err := q.ListLiveByIDs(ctx, candidates)
+	if err != nil {
+		return nil, err
+	}
+	same := make([]int64, 0, len(live))
+	for _, c := range live {
+		if Type(c.Type) == t {
+			same = append(same, c.ID)
+		}
+	}
+	slices.SortFunc(same, func(a, b int64) int {
+		if d := overlap[b] - overlap[a]; d != 0 {
+			return d
+		}
+		return cmp.Compare(b, a)
+	})
+	if len(same) > maxRelated {
+		same = same[:maxRelated]
+	}
+	return same, nil
 }
