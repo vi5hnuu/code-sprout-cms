@@ -2106,7 +2106,7 @@ components:
         name: { type: string }
         description: { type: [string, "null"] }
         position: { type: number, description: Sibling order (ascending). }
-        seo: { type: object, description: Meta title/description overrides. }
+        seo: { $ref: "#/components/schemas/CategorySeo" }
         updatedAt: { type: string, format: date-time }
     CategoryView:
       allOf:
@@ -2138,7 +2138,7 @@ components:
       properties:
         name: { type: string, maxLength: 120 }
         description: { type: [string, "null"] }
-        seo: { type: object }
+        seo: { $ref: "#/components/schemas/CategorySeo" }
         position: { type: number }
     MoveCategory:
       type: object
@@ -2148,6 +2148,13 @@ components:
         parentId: { type: [integer, "null"], format: int64, description: null makes it top-level (ADMIN). }
         slug: { type: string, pattern: "^[a-z0-9]+(-[a-z0-9]+)*$", maxLength: 80 }
 
+    CategorySeo:
+      type: object
+      description: Search-result overrides for the category page; empty uses its name and description.
+      additionalProperties: true
+      properties:
+        title: { type: string, maxLength: 70 }
+        description: { type: string, maxLength: 160 }
     TagKind:
       type: string
       enum: [TOPIC, COMPANY, LANGUAGE, PATTERN]
