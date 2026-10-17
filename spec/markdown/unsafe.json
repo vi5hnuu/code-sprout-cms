@@ -1,0 +1,51 @@
+{
+  "issues": [
+    {
+      "line": 1,
+      "code": "heading.h1",
+      "message": "Start sections at ## — the title is the page's only top-level heading."
+    },
+    {
+      "line": 3,
+      "code": "html.not_allowed",
+      "message": "Raw HTML is not allowed; use Markdown or a directive."
+    },
+    {
+      "line": 5,
+      "code": "html.not_allowed",
+      "message": "Raw HTML is not allowed; use Markdown or a directive."
+    },
+    {
+      "line": 7,
+      "code": "link.unsafe",
+      "message": "Link \"javascript:alert(1)\" is not allowed; use http(s), mailto, or a site path."
+    },
+    {
+      "line": 7,
+      "code": "link.unsafe",
+      "message": "Link \"data:text/html,hi\" is not allowed; use http(s), mailto, or a site path."
+    },
+    {
+      "line": 9,
+      "code": "image.no_alt",
+      "message": "Images need alt text (it is read by screen readers and search engines)."
+    },
+    {
+      "line": 9,
+      "code": "image.not_asset",
+      "message": "Images must be uploaded (asset:\u003cid\u003e), not linked from \"https://evil.example/tracker.png\"."
+    },
+    {
+      "line": 11,
+      "code": "code.indented",
+      "message": "Use a fenced code block (```lang) so the language is known."
+    }
+  ],
+  "toc": [],
+  "wordCount": 12,
+  "readingMinutes": 1,
+  "snippets": [],
+  "assetIds": [],
+  "problemSlugs": [],
+  "plainText": "A second title\nInline html is rejected too.\nclick me and data"
+}

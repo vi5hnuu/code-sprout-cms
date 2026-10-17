@@ -1,0 +1,89 @@
+{
+  "issues": [
+    {
+      "line": 3,
+      "code": "directive.unknown",
+      "message": "Unknown directive \"spoiler\"; available: callout, code-tabs, details, problem, quiz, video."
+    },
+    {
+      "line": 5,
+      "code": "directive.wrong_form",
+      "message": "Write \"problem\" as ::problem."
+    },
+    {
+      "line": 9,
+      "code": "directive.missing_attribute",
+      "message": "problem requires slug=."
+    },
+    {
+      "line": 11,
+      "code": "directive.bad_attribute",
+      "message": "problem slug must be a problem slug."
+    },
+    {
+      "line": 13,
+      "code": "directive.bad_attribute",
+      "message": "quiz id must be a positive numeric id."
+    },
+    {
+      "line": 13,
+      "code": "directive.unknown_attribute",
+      "message": "quiz does not accept \"oops\"."
+    },
+    {
+      "line": 15,
+      "code": "directive.video_source",
+      "message": "video needs exactly one of file= or youtube=."
+    },
+    {
+      "line": 17,
+      "code": "directive.no_label",
+      "message": "details needs a [label], e.g. :::details[Show answer]."
+    },
+    {
+      "line": 21,
+      "code": "directive.bad_attribute",
+      "message": "callout kind must be one of note, tip, info, warning, danger."
+    },
+    {
+      "line": 26,
+      "code": "directive.code_only",
+      "message": "code-tabs may only contain fenced code blocks."
+    },
+    {
+      "line": 32,
+      "code": "code.not_runnable",
+      "message": "Language \"ruby\" cannot be run; runnable languages: c, cpp, csharp, go, java, javascript, kotlin, python, rust, typescript."
+    },
+    {
+      "line": 36,
+      "code": "code.unknown_option",
+      "message": "Unknown code block option \"color\"."
+    },
+    {
+      "line": 40,
+      "code": "directive.wrong_form",
+      "message": "Write \"callout\" as :::callout ... :::."
+    }
+  ],
+  "toc": [
+    {
+      "level": 2,
+      "text": "Directives with mistakes",
+      "id": "directives-with-mistakes"
+    }
+  ],
+  "wordCount": 18,
+  "readingMinutes": 1,
+  "snippets": [
+    {
+      "line": 27,
+      "language": "rust"
+    }
+  ],
+  "assetIds": [
+    1
+  ],
+  "problemSlugs": [],
+  "plainText": "Directives with mistakes\nshould be a leaf\nmissing label\nbad kind\nA paragraph is not a code block."
+}

@@ -1,0 +1,27 @@
+{
+  "issues": [
+    {
+      "line": 21,
+      "code": "directive.unknown",
+      "message": "Unknown directive \"callout-is-not-a-leaf\"; available: callout, code-tabs, details, problem, quiz, video."
+    },
+    {
+      "line": 29,
+      "code": "directive.too_deep",
+      "message": "Directives may nest at most 3 levels."
+    }
+  ],
+  "toc": [
+    {
+      "level": 2,
+      "text": "Nesting",
+      "id": "nesting"
+    }
+  ],
+  "wordCount": 27,
+  "readingMinutes": 1,
+  "snippets": [],
+  "assetIds": [],
+  "problemSlugs": [],
+  "plainText": "Nesting\nOuter\nInner callout.\nStill inside the outer block.\nStill inside the callout.\nLevel 1\nLevel 2\nLevel 3\n1\n2\n3\n4 is too deep\ndeep"
+}

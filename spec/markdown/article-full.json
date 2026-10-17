@@ -1,0 +1,35 @@
+{
+  "issues": [],
+  "toc": [
+    {
+      "level": 2,
+      "text": "Binary search",
+      "id": "binary-search"
+    },
+    {
+      "level": 3,
+      "text": "Implementation",
+      "id": "implementation"
+    }
+  ],
+  "wordCount": 73,
+  "readingMinutes": 1,
+  "snippets": [
+    {
+      "line": 14,
+      "language": "python"
+    },
+    {
+      "line": 18,
+      "language": "cpp"
+    }
+  ],
+  "assetIds": [
+    42,
+    77
+  ],
+  "problemSlugs": [
+    "search-in-rotated-array"
+  ],
+  "plainText": "Binary search\nBinary search finds a target in a sorted array by halving the range each step.\nHalving the search range\nWhy lo + (hi - lo) / 2?\nWriting (lo + hi) / 2 can overflow when both are large.\nImplementation\nCase\nTime\nBest\nO(1)\nWorst\nO(log n)\nShow the recursive version\nRecursion trades the loop for the call stack.\nBinary search walkthrough\nSee complexity analysis, the CLRS book, or mail us."
+}
