@@ -47,6 +47,8 @@ tags:
     description: Search and sitemaps.
   - name: taxonomy
     description: Category tree (site sections) and tags.
+  - name: access
+    description: CMS role grants (who may review, edit and administer).
   - name: studio
     description: |
       Authoring and the editorial workflow. Each item has two state axes: `status`
@@ -308,6 +310,61 @@ paths:
       security: [{ bearerAuth: [] }]
       responses:
         "204": { description: Deleted }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /v1/admin/roles:
+    get:
+      tags: [access]
+      operationId: listRoleGrants
+      summary: Role grants, newest first (site-wide ADMIN).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: user, in: query, description: Only this user's grants (handle)., schema: { type: string } }
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200":
+          description: Page of grants
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RoleGrantPage" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+    post:
+      tags: [access]
+      operationId: grantRole
+      summary: Give a user a role, site-wide or within a category subtree (site-wide ADMIN).
+      description: Granting ADMIN needs a site owner (auth ROLE_ADMIN).
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/GrantRole" }
+      responses:
+        "201":
+          description: Granted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RoleGrantView" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /v1/admin/roles/{id}:
+    parameters:
+      - { $ref: "#/components/parameters/ID" }
+    delete:
+      tags: [access]
+      operationId: revokeRole
+      summary: Revoke a role grant (site-wide ADMIN; ADMIN grants need a site owner).
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Revoked }
+        "401": { $ref: "#/components/responses/Problem" }
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
 
@@ -2078,6 +2135,41 @@ components:
         slug: { type: string }
         name: { type: string }
         description: { type: [string, "null"] }
+    GrantRole:
+      type: object
+      required: [role]
+      additionalProperties: false
+      description: Name the user by handle, or by id when they have no handle yet.
+      properties:
+        handle: { type: string }
+        userId: { type: integer, format: int64 }
+        role: { $ref: "#/components/schemas/CmsRole" }
+        scopeCategoryId: { type: [integer, "null"], format: int64, description: Omit for site-wide. }
+    RoleGrantView:
+      type: object
+      required: [id, user, role, scope, grantedBy, createdAt]
+      properties:
+        id: { type: integer, format: int64 }
+        user: { $ref: "#/components/schemas/PublicUser" }
+        role: { $ref: "#/components/schemas/CmsRole" }
+        scope:
+          description: The category subtree covered; null means site-wide.
+          oneOf:
+            - type: "null"
+            - type: object
+              required: [id, path, name]
+              properties:
+                id: { type: integer, format: int64 }
+                path: { type: string }
+                name: { type: string }
+        grantedBy: { type: [integer, "null"], format: int64 }
+        createdAt: { type: string, format: date-time }
+    RoleGrantPage:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/RoleGrantView" } }
+        nextCursor: { type: [string, "null"] }
     TagPage:
       type: object
       required: [items, nextCursor]

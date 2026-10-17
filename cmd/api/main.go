@@ -30,6 +30,7 @@ import (
 	"code-sprout-cms/internal/platform/ratelimit"
 	"code-sprout-cms/internal/platform/storage"
 	"code-sprout-cms/internal/problem"
+	"code-sprout-cms/internal/roles"
 	"code-sprout-cms/internal/search"
 	"code-sprout-cms/internal/submission"
 	"code-sprout-cms/internal/taxonomy"
@@ -95,6 +96,7 @@ func run() error {
 	library.NewHandler(engagements, reader).Routes(api, auth.RequireUser)
 	library.NewNotes(database, reader).Routes(api, auth.RequireUser)
 	collection.NewHandler(collection.NewService(database, reader, policy)).Routes(api, auth.RequireUser)
+	roles.NewHandler(access.NewGrants(database, policy), users, taxonomies).Routes(api, auth.RequireUser)
 
 	content.NewSitemaps(database).Routes(api)
 

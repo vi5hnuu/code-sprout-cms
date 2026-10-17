@@ -9,6 +9,25 @@ import (
 	"context"
 )
 
+const deleteGrant = `-- name: DeleteGrant :one
+DELETE FROM cms_role_grant WHERE id = $1
+RETURNING id, user_id, role, scope_category_id, granted_by, created_at
+`
+
+func (q *Queries) DeleteGrant(ctx context.Context, id int64) (CmsRoleGrant, error) {
+	row := q.db.QueryRow(ctx, deleteGrant, id)
+	var i CmsRoleGrant
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Role,
+		&i.ScopeCategoryID,
+		&i.GrantedBy,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const hasRoleFor = `-- name: HasRoleFor :one
 SELECT EXISTS (
     SELECT 1
@@ -39,4 +58,79 @@ func (q *Queries) HasRoleFor(ctx context.Context, arg HasRoleForParams) (bool, e
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
+}
+
+const insertGrant = `-- name: InsertGrant :one
+INSERT INTO cms_role_grant (user_id, role, scope_category_id, granted_by)
+VALUES ($1, $2, $3, $4)
+RETURNING id, user_id, role, scope_category_id, granted_by, created_at
+`
+
+type InsertGrantParams struct {
+	UserID          int64
+	Role            string
+	ScopeCategoryID *int64
+	GrantedBy       *int64
+}
+
+func (q *Queries) InsertGrant(ctx context.Context, arg InsertGrantParams) (CmsRoleGrant, error) {
+	row := q.db.QueryRow(ctx, insertGrant,
+		arg.UserID,
+		arg.Role,
+		arg.ScopeCategoryID,
+		arg.GrantedBy,
+	)
+	var i CmsRoleGrant
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Role,
+		&i.ScopeCategoryID,
+		&i.GrantedBy,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const listGrants = `-- name: ListGrants :many
+SELECT id, user_id, role, scope_category_id, granted_by, created_at
+FROM cms_role_grant
+WHERE ($1::bigint IS NULL OR user_id = $1)
+  AND ($2::bigint IS NULL OR id < $2)
+ORDER BY id DESC
+LIMIT $3
+`
+
+type ListGrantsParams struct {
+	UserID   *int64
+	AfterID  *int64
+	RowLimit int32
+}
+
+// Role administration, newest grant first; optionally one user's grants.
+func (q *Queries) ListGrants(ctx context.Context, arg ListGrantsParams) ([]CmsRoleGrant, error) {
+	rows, err := q.db.Query(ctx, listGrants, arg.UserID, arg.AfterID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CmsRoleGrant{}
+	for rows.Next() {
+		var i CmsRoleGrant
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Role,
+			&i.ScopeCategoryID,
+			&i.GrantedBy,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

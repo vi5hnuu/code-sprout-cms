@@ -3,3 +3,16 @@
 //   sqlc v1.31.1
 
 package accessdb
+
+import (
+	"time"
+)
+
+type CmsRoleGrant struct {
+	ID              int64
+	UserID          int64
+	Role            string
+	ScopeCategoryID *int64
+	GrantedBy       *int64
+	CreatedAt       time.Time
+}

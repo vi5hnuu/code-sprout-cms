@@ -15,3 +15,21 @@ SELECT EXISTS (
           )
       )
 );
+
+-- Role administration, newest grant first; optionally one user's grants.
+-- name: ListGrants :many
+SELECT id, user_id, role, scope_category_id, granted_by, created_at
+FROM cms_role_grant
+WHERE (sqlc.narg(user_id)::bigint IS NULL OR user_id = sqlc.narg(user_id))
+  AND (sqlc.narg(after_id)::bigint IS NULL OR id < sqlc.narg(after_id))
+ORDER BY id DESC
+LIMIT sqlc.arg(row_limit);
+
+-- name: InsertGrant :one
+INSERT INTO cms_role_grant (user_id, role, scope_category_id, granted_by)
+VALUES (sqlc.arg(user_id), sqlc.arg(role), sqlc.narg(scope_category_id), sqlc.arg(granted_by))
+RETURNING id, user_id, role, scope_category_id, granted_by, created_at;
+
+-- name: DeleteGrant :one
+DELETE FROM cms_role_grant WHERE id = $1
+RETURNING id, user_id, role, scope_category_id, granted_by, created_at;

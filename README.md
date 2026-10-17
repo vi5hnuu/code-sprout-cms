@@ -6,10 +6,11 @@ without a redesign.
 
 Related services:
 - **auth** (`IdeaProjects/auth`) issues access tokens. This service only verifies them, locally,
-  against auth's JWKS. CMS roles (contributor, reviewer, editor, admin) live here, not in auth.
+  against auth's JWKS. CMS roles (contributor, reviewer, editor, admin) live here, not in auth:
+  a site owner (auth `ROLE_ADMIN`) is allowed everything and hands out roles with `/v1/admin/roles`.
 - **ls-judge** (`IdeaProjects/ls-judge`) runs code from runnable snippets and problem submissions.
-- **web** (`laxmi-solutions-nextjs/apps/code-sprout`) renders public pages with SSG/ISR and hosts
-  the authoring studio.
+- **web** (`laxmi-solutions-nextjs/apps/code-sprout-cms`) renders public pages with SSG/ISR and
+  hosts the authoring studio.
 
 ## Architecture in one screen
 
