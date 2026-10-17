@@ -8,6 +8,7 @@ import (
 
 	"code-sprout-cms/internal/asset"
 	"code-sprout-cms/internal/markdown"
+	"code-sprout-cms/internal/taxonomy"
 )
 
 type Type string
@@ -120,8 +121,10 @@ type Draft struct {
 	UpdatedAt             time.Time            `json:"updatedAt"`
 	Meta                  Meta                 `json:"meta"`
 	Body                  string               `json:"body"`
-	Issues                []markdown.Issue     `json:"issues"` // must be empty to submit or publish
-	Assets                map[int64]asset.File `json:"assets"` // READY files the draft references, for the preview
+	Issues                []markdown.Issue     `json:"issues"`   // must be empty to submit or publish
+	Assets                map[int64]asset.File `json:"assets"`   // READY files the draft references, for the preview
+	Category              *taxonomy.Category   `json:"category"` // meta.categoryId resolved
+	Tags                  []taxonomy.Tag       `json:"tags"`     // meta.tagIds resolved
 }
 
 // Summary is one row of a studio listing.

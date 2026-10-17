@@ -2205,7 +2205,7 @@ components:
         revNo: { type: integer }
     Draft:
       type: object
-      required: [id, type, locale, status, reviewState, scheduledAt, authorId, draftRevNo, hasUnpublishedChanges, live, publishedAt, lastPublishedAt, updatedAt, meta, body, issues, assets]
+      required: [id, type, locale, status, reviewState, scheduledAt, authorId, draftRevNo, hasUnpublishedChanges, live, publishedAt, lastPublishedAt, updatedAt, meta, body, issues, assets, category, tags]
       properties:
         id: { type: integer, format: int64 }
         type: { $ref: "#/components/schemas/ContentType" }
@@ -2234,6 +2234,15 @@ components:
           description: "READY files the draft references (asset:<id> and the blog cover), keyed by id, so any viewer can preview it."
           type: object
           additionalProperties: { $ref: "#/components/schemas/File" }
+        category:
+          description: meta.categoryId resolved; null when unset or since deleted.
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/Category"
+        tags:
+          description: meta.tagIds resolved.
+          type: array
+          items: { $ref: "#/components/schemas/Tag" }
     ContentSummary:
       type: object
       required: [id, type, locale, title, slug, status, reviewState, authorId, draftRevNo, updatedAt]

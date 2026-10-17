@@ -34,6 +34,8 @@ type Assets interface {
 type Taxonomy interface {
 	Get(ctx context.Context, id int64) (taxonomy.Category, error)
 	ExistingTagIDs(ctx context.Context, ids []int64) ([]int64, error)
+	CategoriesByID(ctx context.Context, ids []int64) (map[int64]taxonomy.Category, error)
+	TagsByID(ctx context.Context, ids []int64) ([]taxonomy.Tag, error)
 }
 
 type Service struct {
@@ -247,6 +249,19 @@ func (s *Service) Get(ctx context.Context, p auth.Principal, id int64) (Draft, e
 		ids = append(ids, *meta.Blog.CoverFileID)
 	}
 	if d.Assets, err = s.assets.Describe(ctx, ids); err != nil {
+		return Draft{}, err
+	}
+	// Ids alone mean nothing in the metadata panel; a since-deleted category or tag is omitted.
+	if meta.CategoryID != nil {
+		cats, err := s.taxonomy.CategoriesByID(ctx, []int64{*meta.CategoryID})
+		if err != nil {
+			return Draft{}, err
+		}
+		if c, ok := cats[*meta.CategoryID]; ok {
+			d.Category = &c
+		}
+	}
+	if d.Tags, err = s.taxonomy.TagsByID(ctx, meta.TagIDs); err != nil {
 		return Draft{}, err
 	}
 	return d, nil
