@@ -2341,8 +2341,9 @@ components:
         id: { type: string, description: Anchor id (docs/sprout-markdown.md heading ids). }
     PublicLink:
       type: object
-      required: [kind, id, type, locale, slug, title]
+      required: [kind, id, type, locale, slug, title, path]
       properties:
+        path: { type: string, description: "Canonical site path of the target." }
         kind: { type: string, enum: [PRACTICE, RELATED, PREREQUISITE, EDITORIAL] }
         id: { type: integer, format: int64 }
         type: { $ref: "#/components/schemas/ContentType" }

@@ -1070,20 +1070,23 @@ func (q *Queries) ListLiveIDsAfter(ctx context.Context, arg ListLiveIDsAfterPara
 }
 
 const listLiveLinks = `-- name: ListLiveLinks :many
-SELECT l.kind, c.id, c.type, c.locale, c.slug, c.title
+SELECT l.kind, c.id, c.type, c.locale, c.slug, c.title,
+       COALESCE(split_part(cat.path::text, '.', 1), '')::text AS section
 FROM content_link l
 JOIN content c ON c.id = l.to_id
+LEFT JOIN category cat ON cat.id = c.primary_category_id
 WHERE l.from_id = $1 AND c.status = 'PUBLISHED' AND c.visibility <> 'PRIVATE' AND c.deleted_at IS NULL
 ORDER BY l.kind, l.position
 `
 
 type ListLiveLinksRow struct {
-	Kind   string
-	ID     int64
-	Type   string
-	Locale string
-	Slug   string
-	Title  string
+	Kind    string
+	ID      int64
+	Type    string
+	Locale  string
+	Slug    string
+	Title   string
+	Section string
 }
 
 // Live targets of an item's links (e.g. its practice problems), in authored order.
@@ -1103,6 +1106,7 @@ func (q *Queries) ListLiveLinks(ctx context.Context, fromID int64) ([]ListLiveLi
 			&i.Locale,
 			&i.Slug,
 			&i.Title,
+			&i.Section,
 		); err != nil {
 			return nil, err
 		}

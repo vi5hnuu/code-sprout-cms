@@ -87,6 +87,8 @@ type Link struct {
 	Locale string `json:"locale"`
 	Slug   string `json:"slug"`
 	Title  string `json:"title"`
+	// Path is the target's canonical site path, so links never go through a redirect.
+	Path string `json:"path"`
 }
 
 // Redirect means the slug was renamed; clients answer with a permanent redirect to Slug.
@@ -183,7 +185,8 @@ func (r *Reader) hydratePage(ctx context.Context, q *contentdb.Queries, c conten
 		return nil, err
 	}
 	for _, l := range links {
-		p.Links = append(p.Links, Link{Kind: l.Kind, ID: l.ID, Type: Type(l.Type), Locale: l.Locale, Slug: l.Slug, Title: l.Title})
+		p.Links = append(p.Links, Link{Kind: l.Kind, ID: l.ID, Type: Type(l.Type), Locale: l.Locale, Slug: l.Slug, Title: l.Title,
+			Path: PublicPath(Type(l.Type), l.Locale, l.Section, l.Slug)})
 	}
 	stats, err := r.stats.StatsFor(ctx, []int64{c.ID})
 	if err != nil {

@@ -257,9 +257,11 @@ SELECT file_id FROM content_asset WHERE content_id = $1;
 
 -- Live targets of an item's links (e.g. its practice problems), in authored order.
 -- name: ListLiveLinks :many
-SELECT l.kind, c.id, c.type, c.locale, c.slug, c.title
+SELECT l.kind, c.id, c.type, c.locale, c.slug, c.title,
+       COALESCE(split_part(cat.path::text, '.', 1), '')::text AS section
 FROM content_link l
 JOIN content c ON c.id = l.to_id
+LEFT JOIN category cat ON cat.id = c.primary_category_id
 WHERE l.from_id = $1 AND c.status = 'PUBLISHED' AND c.visibility <> 'PRIVATE' AND c.deleted_at IS NULL
 ORDER BY l.kind, l.position;
 
