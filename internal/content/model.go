@@ -6,6 +6,7 @@ package content
 import (
 	"time"
 
+	"code-sprout-cms/internal/asset"
 	"code-sprout-cms/internal/markdown"
 )
 
@@ -104,22 +105,23 @@ type LiveFace struct {
 
 // Draft is the studio view of one item.
 type Draft struct {
-	ID                    int64            `json:"id"`
-	Type                  Type             `json:"type"`
-	Locale                string           `json:"locale"`
-	Status                Status           `json:"status"`
-	ReviewState           ReviewState      `json:"reviewState"`
-	ScheduledAt           *time.Time       `json:"scheduledAt"`
-	AuthorID              int64            `json:"authorId"`
-	DraftRevNo            int32            `json:"draftRevNo"` // send as If-Match when saving
-	HasUnpublishedChanges bool             `json:"hasUnpublishedChanges"`
-	Live                  *LiveFace        `json:"live"`
-	PublishedAt           *time.Time       `json:"publishedAt"`
-	LastPublishedAt       *time.Time       `json:"lastPublishedAt"`
-	UpdatedAt             time.Time        `json:"updatedAt"`
-	Meta                  Meta             `json:"meta"`
-	Body                  string           `json:"body"`
-	Issues                []markdown.Issue `json:"issues"` // must be empty to submit or publish
+	ID                    int64                `json:"id"`
+	Type                  Type                 `json:"type"`
+	Locale                string               `json:"locale"`
+	Status                Status               `json:"status"`
+	ReviewState           ReviewState          `json:"reviewState"`
+	ScheduledAt           *time.Time           `json:"scheduledAt"`
+	AuthorID              int64                `json:"authorId"`
+	DraftRevNo            int32                `json:"draftRevNo"` // send as If-Match when saving
+	HasUnpublishedChanges bool                 `json:"hasUnpublishedChanges"`
+	Live                  *LiveFace            `json:"live"`
+	PublishedAt           *time.Time           `json:"publishedAt"`
+	LastPublishedAt       *time.Time           `json:"lastPublishedAt"`
+	UpdatedAt             time.Time            `json:"updatedAt"`
+	Meta                  Meta                 `json:"meta"`
+	Body                  string               `json:"body"`
+	Issues                []markdown.Issue     `json:"issues"` // must be empty to submit or publish
+	Assets                map[int64]asset.File `json:"assets"` // READY files the draft references, for the preview
 }
 
 // Summary is one row of a studio listing.

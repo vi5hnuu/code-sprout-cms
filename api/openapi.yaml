@@ -2205,7 +2205,7 @@ components:
         revNo: { type: integer }
     Draft:
       type: object
-      required: [id, type, locale, status, reviewState, scheduledAt, authorId, draftRevNo, hasUnpublishedChanges, live, publishedAt, lastPublishedAt, updatedAt, meta, body, issues]
+      required: [id, type, locale, status, reviewState, scheduledAt, authorId, draftRevNo, hasUnpublishedChanges, live, publishedAt, lastPublishedAt, updatedAt, meta, body, issues, assets]
       properties:
         id: { type: integer, format: int64 }
         type: { $ref: "#/components/schemas/ContentType" }
@@ -2230,6 +2230,10 @@ components:
           description: Markdown problems; must be empty to submit or publish.
           type: array
           items: { $ref: "#/components/schemas/MarkdownIssue" }
+        assets:
+          description: "READY files the draft references (asset:<id> and the blog cover), keyed by id, so any viewer can preview it."
+          type: object
+          additionalProperties: { $ref: "#/components/schemas/File" }
     ContentSummary:
       type: object
       required: [id, type, locale, title, slug, status, reviewState, authorId, draftRevNo, updatedAt]

@@ -238,16 +238,27 @@ func (s *Service) Get(ctx context.Context, p auth.Principal, id int64) (Draft, e
 	if err := s.requireView(ctx, p, c, meta); err != nil {
 		return Draft{}, err
 	}
-	return toDraft(c, meta, body), nil
+	analysis := markdown.Analyze([]byte(body))
+	d := toDraft(c, meta, body, analysis.Issues)
+	// Resolve the files the draft references so every viewer (reviewers included, who cannot
+	// read the author's uploads directly) previews it as readers will see it.
+	ids := analysis.AssetIDs
+	if meta.Blog != nil && meta.Blog.CoverFileID != nil {
+		ids = append(ids, *meta.Blog.CoverFileID)
+	}
+	if d.Assets, err = s.assets.Describe(ctx, ids); err != nil {
+		return Draft{}, err
+	}
+	return d, nil
 }
 
-func toDraft(c contentdb.Content, meta Meta, body string) Draft {
+func toDraft(c contentdb.Content, meta Meta, body string, issues []markdown.Issue) Draft {
 	d := Draft{
 		ID: c.ID, Type: Type(c.Type), Locale: c.Locale, Status: Status(c.Status), ReviewState: ReviewState(c.ReviewState),
 		ScheduledAt: c.ScheduledAt, AuthorID: c.AuthorID, DraftRevNo: c.DraftRevNo,
 		HasUnpublishedChanges: c.PublishedRevNo == nil || *c.PublishedRevNo != c.DraftRevNo,
 		PublishedAt:           c.PublishedAt, LastPublishedAt: c.LastPublishedAt, UpdatedAt: c.UpdatedAt,
-		Meta: meta, Body: body, Issues: markdown.Analyze([]byte(body)).Issues,
+		Meta: meta, Body: body, Issues: issues,
 	}
 	if c.PublishedRevNo != nil {
 		d.Live = &LiveFace{Slug: c.Slug, Title: c.Title, RevNo: *c.PublishedRevNo}
