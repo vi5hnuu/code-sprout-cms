@@ -27,6 +27,15 @@ const MaxDepth = 6
 
 var slugPattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
+// reservedRootSlugs are site routes. Articles live at /{rootCategorySlug}/{slug}, so a root
+// category named like one of these would collide with that page (see content.PublicPath).
+var reservedRootSlugs = map[string]bool{
+	"api": true, "articles": true, "auth": true, "blog": true, "category": true, "courses": true,
+	"library": true, "lists": true, "problem-of-the-day": true, "problems": true, "quiz": true,
+	"search": true, "series": true, "sitemaps": true, "studio": true, "study-plans": true,
+	"tag": true, "topics": true, "u": true,
+}
+
 // Category is the API view. Path is the URL form ("dsa/algorithms"); the database stores the
 // ltree form ("dsa.algorithms").
 type Category struct {
@@ -179,6 +188,9 @@ func (s *Service) Create(ctx context.Context, p auth.Principal, in CreateCategor
 	}
 	// Top-level sections shape the whole site, so only admins add them.
 	if in.ParentID == nil {
+		if reservedRootSlugs[in.Slug] {
+			return Category{}, apperr.ValidationFailed(map[string]string{"slug": "This slug is reserved for a site page."})
+		}
 		if err := s.policy.Require(ctx, p, access.RoleAdmin, nil); err != nil {
 			return Category{}, err
 		}
@@ -280,6 +292,9 @@ func (s *Service) Move(ctx context.Context, p auth.Principal, id int64, in MoveC
 		return Category{}, err
 	}
 	if in.ParentID == nil {
+		if reservedRootSlugs[in.Slug] {
+			return Category{}, apperr.ValidationFailed(map[string]string{"slug": "This slug is reserved for a site page."})
+		}
 		if err := s.policy.Require(ctx, p, access.RoleAdmin, nil); err != nil {
 			return Category{}, err
 		}

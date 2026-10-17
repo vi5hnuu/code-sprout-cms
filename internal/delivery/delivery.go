@@ -75,25 +75,35 @@ func (s *Service) contentChanged(ctx context.Context, e outbox.Event) error {
 	if err := s.sitemaps.Refresh(ctx, content.Type(ev.Type), e.AggregateID); err != nil {
 		return err
 	}
-	if err := s.invalidate(ctx, "content:"+strconv.FormatInt(e.AggregateID, 10), "listings", "sitemaps", "search"); err != nil {
-		return err
-	}
 	path, ok, err := s.paths.PathOf(ctx, e.AggregateID)
-	if err != nil || !ok {
+	if err != nil {
 		return err
 	}
-	urls := []string{path}
-	if ev.OldSlug != "" {
-		// Same section, old slug: crawlers learn it now redirects.
-		urls = append(urls, path[:strings.LastIndexByte(path, '/')+1]+url.PathEscape(ev.OldSlug))
+	var paths []string
+	if ok {
+		paths = append(paths, path)
+		if ev.OldSlug != "" {
+			// Same section, old slug: the old page must start redirecting, and crawlers told.
+			paths = append(paths, path[:strings.LastIndexByte(path, '/')+1]+url.PathEscape(ev.OldSlug))
+		}
 	}
-	return s.indexNow(ctx, urls)
+	// The web caches pages by path (it cannot know a page's content id before fetching it),
+	// so pages are revalidated by path, API responses by tag.
+	if err := s.refresh(ctx, paths, "content:"+strconv.FormatInt(e.AggregateID, 10), "listings", "sitemaps", "search"); err != nil {
+		return err
+	}
+	return s.indexNow(ctx, paths)
 }
 
 // invalidate drops cached responses carrying these tags in Next.js and at the CDN.
 func (s *Service) invalidate(ctx context.Context, tags ...string) error {
+	return s.refresh(ctx, nil, tags...)
+}
+
+// refresh revalidates pages by path and data by tag in Next.js, and purges the tags at the CDN.
+func (s *Service) refresh(ctx context.Context, paths []string, tags ...string) error {
 	if s.cfg.RevalidateURL != "" {
-		if err := s.post(ctx, s.cfg.RevalidateURL, map[string]any{"tags": tags},
+		if err := s.post(ctx, s.cfg.RevalidateURL, map[string]any{"tags": tags, "paths": paths},
 			map[string]string{"X-Revalidate-Secret": s.cfg.RevalidateSecret}); err != nil {
 			return fmt.Errorf("revalidate: %w", err)
 		}
@@ -111,7 +121,7 @@ func (s *Service) invalidate(ctx context.Context, tags ...string) error {
 // indexNow tells Bing, Yandex and other IndexNow engines that these URLs changed. (Google does
 // not support IndexNow; it relies on sitemap lastmod.)
 func (s *Service) indexNow(ctx context.Context, paths []string) error {
-	if s.cfg.IndexNowKey == "" || s.cfg.SiteURL == "" {
+	if s.cfg.IndexNowKey == "" || s.cfg.SiteURL == "" || len(paths) == 0 {
 		return nil
 	}
 	site, err := url.Parse(s.cfg.SiteURL)
