@@ -35,6 +35,12 @@ tags:
     description: The signed-in user's own profile and state.
   - name: taxonomy
     description: Category tree (site sections) and tags.
+  - name: uploads
+    description: |
+      Direct-to-storage uploads. 1) POST /v1/studio/uploads with the file's type, size and
+      SHA-256. 2) PUT the bytes to `upload.url`, sending every header in `upload.headers`.
+      3) POST .../complete. A 202 means a large file is still being verified; poll GET until
+      READY. Content references a READY image as `![alt](asset:<id>)`.
 
 paths:
   /healthz:
@@ -286,6 +292,73 @@ paths:
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
 
+  /v1/studio/uploads:
+    post:
+      tags: [uploads]
+      operationId: createUpload
+      summary: Get a presigned upload URL (or the existing file, if these exact bytes were uploaded before).
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateUpload" }
+      responses:
+        "201":
+          description: Upload URL issued
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UploadTicket" }
+        "200":
+          description: Identical file already uploaded; no upload needed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UploadTicket" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+  /v1/studio/uploads/{id}:
+    parameters:
+      - { $ref: "#/components/parameters/ID" }
+    get:
+      tags: [uploads]
+      operationId: getUpload
+      summary: Current state of one of your uploads.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: File
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/File" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /v1/studio/uploads/{id}/complete:
+    parameters:
+      - { $ref: "#/components/parameters/ID" }
+    post:
+      tags: [uploads]
+      operationId: completeUpload
+      summary: Verify the uploaded bytes (size, type, SHA-256). Idempotent.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Verified and READY
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/File" }
+        "202":
+          description: Large file queued for verification (VERIFYING); poll GET
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/File" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409":
+          description: "Not uploaded yet (`upload.missing`) or bytes did not match (`upload.mismatch`, `upload.quarantined`)"
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -453,3 +526,51 @@ components:
       properties:
         name: { type: string, maxLength: 120 }
         description: { type: [string, "null"] }
+
+    FilePurpose:
+      type: string
+      enum: [ASSET, AVATAR, TEST_SET, CHECKER]
+      description: |
+        ASSET: png/jpeg/webp/gif ≤ 10 MiB, mp4/webm ≤ 500 MiB (public).
+        AVATAR: png/jpeg/webp ≤ 2 MiB (public).
+        TEST_SET: zip or ndjson ≤ 1 GiB (private). CHECKER: text/plain ≤ 1 MiB (private).
+    File:
+      type: object
+      required: [id, purpose, mime, sizeBytes, status, width, height, url]
+      properties:
+        id: { type: integer, format: int64 }
+        purpose: { $ref: "#/components/schemas/FilePurpose" }
+        mime: { type: string }
+        sizeBytes: { type: integer, format: int64 }
+        status: { type: string, enum: [PENDING, VERIFYING, READY, QUARANTINED] }
+        width: { type: [integer, "null"], description: Images only. }
+        height: { type: [integer, "null"] }
+        url: { type: [string, "null"], description: Public files once READY; private files never have one. }
+    CreateUpload:
+      type: object
+      required: [purpose, mime, sizeBytes, sha256]
+      additionalProperties: false
+      properties:
+        purpose: { $ref: "#/components/schemas/FilePurpose" }
+        mime: { type: string, example: image/png }
+        sizeBytes: { type: integer, format: int64, minimum: 1 }
+        sha256: { type: string, pattern: "^[0-9a-f]{64}$", description: "SHA-256 of the exact bytes to upload, as hex." }
+    UploadTicket:
+      type: object
+      required: [file, upload, alreadyUploaded]
+      properties:
+        file: { $ref: "#/components/schemas/File" }
+        alreadyUploaded: { type: boolean }
+        upload:
+          oneOf:
+            - type: "null"
+            - type: object
+              required: [url, method, headers, expiresAt]
+              properties:
+                url: { type: string }
+                method: { type: string, enum: [PUT] }
+                headers:
+                  type: object
+                  additionalProperties: { type: string }
+                  description: Send every one exactly; they are part of the signature.
+                expiresAt: { type: string, format: date-time }

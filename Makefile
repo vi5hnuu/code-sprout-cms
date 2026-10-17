@@ -11,7 +11,7 @@ DATABASE_URL ?= postgres://sprout:sprout@localhost:5442/sprout?sslmode=disable
 MIGRATIONS   := db/migrations
 
 .PHONY: build api worker run-api run-worker test test-db lint lint-api generate \
-        infra-up infra-down migrate migrate-down migrate-status migration
+        infra-up infra-down storage-init migrate migrate-down migrate-status migration
 
 build: api worker
 
@@ -32,9 +32,12 @@ run-worker:
 # Integration tests run against a separate database so they never touch dev data.
 TEST_DATABASE_URL ?= postgres://sprout:sprout@localhost:5442/sprout_test?sslmode=disable
 TEST_REDIS_ADDR   ?= localhost:6389
+TEST_STORAGE_ENDPOINT ?= http://localhost:9010
 
 test: test-db
-	TEST_DATABASE_URL="$(TEST_DATABASE_URL)" TEST_REDIS_ADDR="$(TEST_REDIS_ADDR)" go test ./... -race -count=1
+	@$(MAKE) --no-print-directory infra-up PROFILES=storage >/dev/null 2>&1 && $(MAKE) --no-print-directory storage-init >/dev/null
+	TEST_DATABASE_URL="$(TEST_DATABASE_URL)" TEST_REDIS_ADDR="$(TEST_REDIS_ADDR)" \
+		TEST_STORAGE_ENDPOINT="$(TEST_STORAGE_ENDPOINT)" go test ./... -race -count=1
 
 test-db:
 	@docker compose -f docker-compose.dev.yml exec -T postgres \
@@ -80,3 +83,10 @@ migrate-status:
 # make migration name=add_quiz_tables
 migration:
 	goose -dir $(MIGRATIONS) -s create $(name) sql
+
+# Creates the dev buckets in SeaweedFS (idempotent). Production buckets are provisioned with
+# the infrastructure, not by the app.
+storage-init:
+	@for b in sprout-public sprout-private; do \
+		echo "s3.bucket.create -name $$b" | docker compose -f docker-compose.dev.yml --profile storage exec -T s3 weed shell >/dev/null 2>&1; \
+	done; echo "buckets: sprout-public sprout-private"

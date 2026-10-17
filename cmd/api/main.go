@@ -15,12 +15,14 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"code-sprout-cms/internal/access"
+	"code-sprout-cms/internal/asset"
 	"code-sprout-cms/internal/auth"
 	"code-sprout-cms/internal/platform/apperr"
 	"code-sprout-cms/internal/platform/config"
 	"code-sprout-cms/internal/platform/db"
 	"code-sprout-cms/internal/platform/httpx"
 	"code-sprout-cms/internal/platform/ratelimit"
+	"code-sprout-cms/internal/platform/storage"
 	"code-sprout-cms/internal/taxonomy"
 	"code-sprout-cms/internal/user"
 )
@@ -62,12 +64,15 @@ func run() error {
 	users := user.NewService(database.Primary)
 	policy := access.NewPolicy(database.Primary)
 	taxonomies := taxonomy.NewService(database, policy)
+	assets := asset.NewService(database, storage.FromConfig(cfg.Storage), asset.ConfigFrom(cfg.Storage))
 	limiter := ratelimit.New(rdb)
 	clientIP := ratelimit.ClientIPFrom(cfg.TrustedClientIPHeader)
 
 	api := http.NewServeMux()
 	user.NewHandler(users).Routes(api, auth.RequireUser)
 	taxonomy.NewHandler(taxonomies).Routes(api, auth.RequireUser)
+	asset.NewHandler(assets).Routes(api, auth.RequireUser,
+		limiter.Middleware("uploads", ratelimit.PerMinute(30, 10), clientIP))
 	// Unmatched paths answer in the same problem+json shape as every other error.
 	api.Handle("/", httpx.HandlerFunc(func(http.ResponseWriter, *http.Request) error {
 		return apperr.NotFound("route.not_found", "No such endpoint.")

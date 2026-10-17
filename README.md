@@ -27,6 +27,9 @@ CDN ─► Next.js (ISR) ─► cmd/api ─► Postgres primary ─► replica (
   together; the worker delivers at least once. Handlers must therefore be idempotent.
 - **Public responses never vary by user**, so the CDN can serve them to everyone. Per-user
   state (liked? bookmarked?) comes from `/v1/me/...` calls made by client islands.
+- **Files never pass through the API.** Clients PUT to presigned URLs. Storage that verifies
+  checksums (S3, R2) proves the bytes at upload; otherwise the API hashes small files and the
+  worker hashes large ones. Private files (test sets) live in a separate bucket with no URL.
 - **Engagement tables are hash-partitioned** by `content_id` or `user_id`, the key every query
   carries. Those are also the distribution columns if we ever shard with Citus.
 
@@ -49,7 +52,8 @@ Prerequisites: Go, Docker, `brew install sqlc goose`.
 
 ```sh
 cp .env.example .env
-make infra-up                             # Postgres + Redis (PROFILES="storage search" for S3 + search)
+make infra-up PROFILES=storage            # Postgres, Redis, SeaweedFS (S3); add "search" later
+make storage-init                         # buckets sprout-public (anonymous read) and sprout-private
 make migrate
 make run-api                              # http://localhost:9300
 make run-worker

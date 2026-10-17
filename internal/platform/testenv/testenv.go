@@ -41,3 +41,14 @@ func Redis(t *testing.T) *redis.Client {
 	t.Cleanup(func() { _ = c.Close() })
 	return c
 }
+
+// StorageEndpoint returns the S3 endpoint for storage integration tests (buckets
+// sprout-public and sprout-private, created by `make storage-init`).
+func StorageEndpoint(t *testing.T) string {
+	t.Helper()
+	ep := os.Getenv("TEST_STORAGE_ENDPOINT")
+	if ep == "" {
+		t.Skip("TEST_STORAGE_ENDPOINT not set; run `make test`")
+	}
+	return ep
+}

@@ -64,3 +64,11 @@ sql:
         <<: *go
         package: taxonomydb
         out: internal/taxonomy/taxonomydb
+  - engine: postgresql
+    schema: db/migrations
+    queries: db/queries/asset.sql
+    gen:
+      go:
+        <<: *go
+        package: assetdb
+        out: internal/asset/assetdb

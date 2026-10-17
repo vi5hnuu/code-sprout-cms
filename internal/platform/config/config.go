@@ -30,7 +30,18 @@ type Config struct {
 	RedisAddr     string
 	RedisPassword string
 
-	Auth AuthConfig
+	Auth    AuthConfig
+	Storage StorageConfig
+}
+
+type StorageConfig struct {
+	Endpoint      string
+	Region        string
+	AccessKey     string
+	SecretKey     string
+	PublicBucket  string
+	PrivateBucket string
+	PublicBaseURL string
 }
 
 type AuthConfig struct {
@@ -67,6 +78,16 @@ func Load() (Config, error) {
 			JWKSURL:  req("AUTH_JWKS_URL"),
 			Issuer:   req("AUTH_ISSUER"),
 			Audience: req("AUTH_AUDIENCE"),
+		},
+
+		Storage: StorageConfig{
+			Endpoint:      req("STORAGE_ENDPOINT"),
+			Region:        envOr("STORAGE_REGION", "auto"),
+			AccessKey:     req("STORAGE_ACCESS_KEY"),
+			SecretKey:     req("STORAGE_SECRET_KEY"),
+			PublicBucket:  req("STORAGE_PUBLIC_BUCKET"),
+			PrivateBucket: req("STORAGE_PRIVATE_BUCKET"),
+			PublicBaseURL: strings.TrimRight(req("STORAGE_PUBLIC_BASE_URL"), "/"),
 		},
 	}
 	if cfg.DatabaseReplicaURL == "" {

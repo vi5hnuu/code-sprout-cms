@@ -10,11 +10,14 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 
+	"code-sprout-cms/internal/asset"
 	"code-sprout-cms/internal/maintenance"
 	"code-sprout-cms/internal/outbox"
 	"code-sprout-cms/internal/platform/config"
 	"code-sprout-cms/internal/platform/db"
+	"code-sprout-cms/internal/platform/storage"
 )
 
 func main() {
@@ -42,10 +45,12 @@ func run() error {
 
 	// Handlers are registered here as their domains land (search, sitemap, revalidation).
 	dispatcher := outbox.NewDispatcher(database)
+	assets := asset.NewService(database, storage.FromConfig(cfg.Storage), asset.ConfigFrom(cfg.Storage))
 
 	var wg sync.WaitGroup
 	wg.Go(func() { dispatcher.Run(ctx) })
 	wg.Go(func() { maintenance.KeepPartitionsAhead(ctx, database.Primary) })
+	wg.Go(func() { assets.RunVerifier(ctx, 5*time.Second) })
 
 	slog.Info("worker started")
 	wg.Wait()
