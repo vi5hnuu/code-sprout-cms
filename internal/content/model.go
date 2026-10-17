@@ -125,6 +125,7 @@ type Draft struct {
 	Assets                map[int64]asset.File `json:"assets"`   // READY files the draft references, for the preview
 	Category              *taxonomy.Category   `json:"category"` // meta.categoryId resolved
 	Tags                  []taxonomy.Tag       `json:"tags"`     // meta.tagIds resolved
+	Actions               Actions              `json:"actions"`  // what the caller may do next
 }
 
 // Summary is one row of a studio listing.

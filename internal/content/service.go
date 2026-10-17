@@ -242,6 +242,9 @@ func (s *Service) Get(ctx context.Context, p auth.Principal, id int64) (Draft, e
 	}
 	analysis := markdown.Analyze([]byte(body))
 	d := toDraft(c, meta, body, analysis.Issues)
+	if d.Actions, err = s.actionsFor(ctx, p, c, meta); err != nil {
+		return Draft{}, err
+	}
 	// Resolve the files the draft references so every viewer (reviewers included, who cannot
 	// read the author's uploads directly) previews it as readers will see it.
 	ids := analysis.AssetIDs
