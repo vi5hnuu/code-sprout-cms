@@ -35,6 +35,13 @@ tags:
     description: The signed-in user's own profile and state.
   - name: taxonomy
     description: Category tree (site sections) and tags.
+  - name: studio
+    description: |
+      Authoring and the editorial workflow. Each item has two state axes: `status`
+      (DRAFT never live, PUBLISHED, ARCHIVED) and the `reviewState` of its pending draft
+      (NONE, IN_REVIEW, CHANGES_REQUESTED, APPROVED, SCHEDULED). Readers keep seeing the live
+      version until an editor publishes the draft. Draft responses carry `ETag: "<draftRevNo>"`;
+      saves and restores must send it back as `If-Match`.
   - name: uploads
     description: |
       Direct-to-storage uploads. 1) POST /v1/studio/uploads with the file's type, size and
@@ -359,6 +366,278 @@ paths:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
 
+  /v1/studio/content:
+    post:
+      tags: [studio]
+      operationId: createContent
+      summary: Start a new article, blog or topic page (any signed-in, non-guest user).
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateContent" }
+      responses:
+        "201": { $ref: "#/components/responses/Draft" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+    get:
+      tags: [studio]
+      operationId: listMyContent
+      summary: The caller's items, most recently updated first.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200":
+          description: Page of items
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContentSummaryPage" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+  /v1/studio/review-queue:
+    get:
+      tags: [studio]
+      operationId: getReviewQueue
+      summary: Items waiting on the caller, oldest first, within the categories they cover.
+      description: "`IN_REVIEW` for reviewers; `APPROVED` (ready to publish) for editors."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: state, in: query, schema: { type: string, enum: [IN_REVIEW, APPROVED], default: IN_REVIEW } }
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200":
+          description: Page of items
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContentSummaryPage" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+  /v1/studio/content/{id}:
+    parameters:
+      - { $ref: "#/components/parameters/ID" }
+    get:
+      tags: [studio]
+      operationId: getDraft
+      summary: The current draft, its live face and its Markdown issues.
+      description: Visible to the author and to reviewers/editors of its category; 404 for anyone else.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/Draft" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+    delete:
+      tags: [studio]
+      operationId: deleteContent
+      summary: Soft-delete. Authors may delete their never-published drafts; otherwise EDITOR.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Deleted }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /v1/studio/content/{id}/draft:
+    parameters:
+      - { $ref: "#/components/parameters/ID" }
+    put:
+      tags: [studio]
+      operationId: saveDraft
+      summary: Replace the draft with a new revision (a no-op save writes nothing).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/IfMatch" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DraftInput" }
+      responses:
+        "200": { $ref: "#/components/responses/Draft" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "412": { $ref: "#/components/responses/StaleRevision" }
+        "428": { $ref: "#/components/responses/Problem" }
+  /v1/studio/content/{id}/revisions:
+    parameters:
+      - { $ref: "#/components/parameters/ID" }
+    get:
+      tags: [studio]
+      operationId: listRevisions
+      summary: Revision history, newest first (no bodies).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200":
+          description: Page of revisions
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RevisionPage" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /v1/studio/content/{id}/revisions/{rev}:
+    parameters:
+      - { $ref: "#/components/parameters/ID" }
+      - { $ref: "#/components/parameters/Rev" }
+    get:
+      tags: [studio]
+      operationId: getRevision
+      summary: One revision with its body and metadata.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Revision
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RevisionDetail" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /v1/studio/content/{id}/revisions/{rev}/restore:
+    parameters:
+      - { $ref: "#/components/parameters/ID" }
+      - { $ref: "#/components/parameters/Rev" }
+    post:
+      tags: [studio]
+      operationId: restoreRevision
+      summary: Make an old revision the draft again, as a new revision.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/IfMatch" }
+      responses:
+        "200": { $ref: "#/components/responses/Draft" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "412": { $ref: "#/components/responses/StaleRevision" }
+        "428": { $ref: "#/components/responses/Problem" }
+  /v1/studio/content/{id}/reviews:
+    parameters:
+      - { $ref: "#/components/parameters/ID" }
+    get:
+      tags: [studio]
+      operationId: listReviews
+      summary: Review decisions with inline notes, newest first.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Reviews
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/Review" } }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /v1/studio/content/{id}/submit:
+    parameters:
+      - { $ref: "#/components/parameters/ID" }
+    post:
+      tags: [studio]
+      operationId: submitForReview
+      summary: Send the draft to reviewers (author or editor). It must already be publishable.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/Draft" }
+        "400": { $ref: "#/components/responses/NotPublishable" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /v1/studio/content/{id}/withdraw:
+    parameters:
+      - { $ref: "#/components/parameters/ID" }
+    post:
+      tags: [studio]
+      operationId: withdrawFromReview
+      summary: Take the draft back from review, or cancel its schedule, so it can be edited.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/Draft" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /v1/studio/content/{id}/review:
+    parameters:
+      - { $ref: "#/components/parameters/ID" }
+    post:
+      tags: [studio]
+      operationId: reviewContent
+      summary: Approve or request changes (REVIEWER in the category; never the author).
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReviewInput" }
+      responses:
+        "200": { $ref: "#/components/responses/Draft" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /v1/studio/content/{id}/publish:
+    parameters:
+      - { $ref: "#/components/parameters/ID" }
+    post:
+      tags: [studio]
+      operationId: publishContent
+      summary: Make the draft live now (EDITOR in the category).
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/Draft" }
+        "400": { $ref: "#/components/responses/NotPublishable" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /v1/studio/content/{id}/schedule:
+    parameters:
+      - { $ref: "#/components/parameters/ID" }
+    post:
+      tags: [studio]
+      operationId: scheduleContent
+      summary: Publish an approved draft at a set time (EDITOR).
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ScheduleInput" }
+      responses:
+        "200": { $ref: "#/components/responses/Draft" }
+        "400": { $ref: "#/components/responses/NotPublishable" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /v1/studio/content/{id}/archive:
+    parameters:
+      - { $ref: "#/components/parameters/ID" }
+    post:
+      tags: [studio]
+      operationId: archiveContent
+      summary: Take a live page down (EDITOR). Publishing again restores it.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/Draft" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -368,6 +647,17 @@ components:
       description: Access token from the shared auth service (audience `code-sprout-cms`).
 
   parameters:
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      description: The draft ETag you loaded, e.g. "12".
+      schema: { type: string }
+    Rev:
+      name: rev
+      in: path
+      required: true
+      schema: { type: integer, minimum: 1 }
     ID:
       name: id
       in: path
@@ -384,6 +674,25 @@ components:
       schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
 
   responses:
+    Draft:
+      description: The item's studio view
+      headers:
+        ETag:
+          description: Draft revision; send it as If-Match on the next save.
+          schema: { type: string }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Draft" }
+    StaleRevision:
+      description: "Someone saved first (`content.stale_revision`); `details.currentRevNo` is the newer revision. Reload, then save."
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    NotPublishable:
+      description: "Not publishable yet (`content.not_publishable`); `details.issues` lists every blocker with its field or line."
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
     Problem:
       description: Error
       content:
@@ -574,3 +883,159 @@ components:
                   additionalProperties: { type: string }
                   description: Send every one exactly; they are part of the signature.
                 expiresAt: { type: string, format: date-time }
+
+    ContentType: { type: string, enum: [ARTICLE, BLOG, PROBLEM, TOPIC_PAGE, QUIZ] }
+    ContentStatus: { type: string, enum: [DRAFT, PUBLISHED, ARCHIVED] }
+    ReviewState: { type: string, enum: [NONE, IN_REVIEW, CHANGES_REQUESTED, APPROVED, SCHEDULED] }
+    Meta:
+      type: object
+      description: Draft metadata, versioned with the body. It becomes the live face at publish.
+      required: [title]
+      properties:
+        title: { type: string, maxLength: 200 }
+        slug: { type: string, maxLength: 120, description: Derived from the title when empty. }
+        summary: { type: [string, "null"], maxLength: 300, description: "Required (50+ characters) to publish; search results show it." }
+        categoryId: { type: [integer, "null"], format: int64, description: Required to publish. }
+        tagIds: { type: array, maxItems: 10, items: { type: integer, format: int64 } }
+        visibility: { type: string, enum: [PUBLIC, UNLISTED, PRIVATE], default: PUBLIC }
+        access: { type: string, enum: [FREE, PREMIUM], default: FREE }
+        article:
+          type: object
+          properties:
+            level: { type: [string, "null"], enum: [BEGINNER, INTERMEDIATE, ADVANCED, null] }
+        blog:
+          type: object
+          properties:
+            coverFileId: { type: [integer, "null"], format: int64 }
+    DraftInput:
+      description: Full replacement of the draft.
+      allOf:
+        - $ref: "#/components/schemas/Meta"
+        - type: object
+          required: [body]
+          properties:
+            body: { type: string, description: "Sprout Markdown (docs/sprout-markdown.md), at most 1 MiB." }
+            message: { type: [string, "null"], maxLength: 500, description: Optional revision note. }
+    CreateContent:
+      allOf:
+        - $ref: "#/components/schemas/DraftInput"
+        - type: object
+          required: [type]
+          properties:
+            type: { type: string, enum: [ARTICLE, BLOG, TOPIC_PAGE] }
+            locale: { type: string, default: en }
+    MarkdownIssue:
+      type: object
+      required: [line, code, message]
+      properties:
+        line: { type: integer }
+        code: { type: string }
+        message: { type: string }
+    LiveFace:
+      type: object
+      required: [slug, title, revNo]
+      properties:
+        slug: { type: string }
+        title: { type: string }
+        revNo: { type: integer }
+    Draft:
+      type: object
+      required: [id, type, locale, status, reviewState, scheduledAt, authorId, draftRevNo, hasUnpublishedChanges, live, publishedAt, lastPublishedAt, updatedAt, meta, body, issues]
+      properties:
+        id: { type: integer, format: int64 }
+        type: { $ref: "#/components/schemas/ContentType" }
+        locale: { type: string }
+        status: { $ref: "#/components/schemas/ContentStatus" }
+        reviewState: { $ref: "#/components/schemas/ReviewState" }
+        scheduledAt: { type: [string, "null"], format: date-time }
+        authorId: { type: integer, format: int64 }
+        draftRevNo: { type: integer }
+        hasUnpublishedChanges: { type: boolean }
+        live:
+          description: What readers see now; null if never published.
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/LiveFace"
+        publishedAt: { type: [string, "null"], format: date-time }
+        lastPublishedAt: { type: [string, "null"], format: date-time }
+        updatedAt: { type: string, format: date-time }
+        meta: { $ref: "#/components/schemas/Meta" }
+        body: { type: string }
+        issues:
+          description: Markdown problems; must be empty to submit or publish.
+          type: array
+          items: { $ref: "#/components/schemas/MarkdownIssue" }
+    ContentSummary:
+      type: object
+      required: [id, type, locale, title, slug, status, reviewState, authorId, draftRevNo, updatedAt]
+      properties:
+        id: { type: integer, format: int64 }
+        type: { $ref: "#/components/schemas/ContentType" }
+        locale: { type: string }
+        title: { type: string }
+        slug: { type: string }
+        status: { $ref: "#/components/schemas/ContentStatus" }
+        reviewState: { $ref: "#/components/schemas/ReviewState" }
+        authorId: { type: integer, format: int64 }
+        draftRevNo: { type: integer }
+        updatedAt: { type: string, format: date-time }
+    ContentSummaryPage:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/ContentSummary" } }
+        nextCursor: { type: [string, "null"] }
+    Revision:
+      type: object
+      required: [revNo, editorId, message, createdAt, archived]
+      properties:
+        revNo: { type: integer }
+        editorId: { type: integer, format: int64 }
+        message: { type: [string, "null"] }
+        createdAt: { type: string, format: date-time }
+        archived: { type: boolean }
+    RevisionPage:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/Revision" } }
+        nextCursor: { type: [string, "null"] }
+    RevisionDetail:
+      allOf:
+        - $ref: "#/components/schemas/Revision"
+        - type: object
+          required: [meta, body]
+          properties:
+            meta: { $ref: "#/components/schemas/Meta" }
+            body: { type: string }
+    ReviewNote:
+      type: object
+      required: [anchor, body]
+      properties:
+        anchor: { type: object, description: "Where the note points, e.g. a line number or heading id." }
+        body: { type: string }
+    ReviewInput:
+      type: object
+      required: [decision]
+      additionalProperties: false
+      properties:
+        decision: { type: string, enum: [APPROVED, CHANGES_REQUESTED] }
+        summary: { type: [string, "null"] }
+        notes: { type: array, maxItems: 200, items: { $ref: "#/components/schemas/ReviewNote" } }
+    Review:
+      type: object
+      required: [id, revNo, reviewerId, decision, summary, notes, createdAt]
+      properties:
+        id: { type: integer, format: int64 }
+        revNo: { type: integer, description: The draft revision that was reviewed. }
+        reviewerId: { type: integer, format: int64 }
+        decision: { type: string, enum: [APPROVED, CHANGES_REQUESTED] }
+        summary: { type: [string, "null"] }
+        notes: { type: array, items: { $ref: "#/components/schemas/ReviewNote" } }
+        createdAt: { type: string, format: date-time }
+    ScheduleInput:
+      type: object
+      required: [at]
+      additionalProperties: false
+      properties:
+        at: { type: string, format: date-time, description: Between one minute and one year from now. }

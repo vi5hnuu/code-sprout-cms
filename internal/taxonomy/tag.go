@@ -215,3 +215,11 @@ func (s *Service) recordTagChange(ctx context.Context, tx pgx.Tx, p auth.Princip
 	}
 	return outbox.Publish(ctx, tx, outbox.TopicTagChanged, t.ID, outbox.TagEvent{Kind: string(t.Kind), Slug: t.Slug})
 }
+
+// ExistingTagIDs returns which of ids are real tags (sorted), for domains attaching tags.
+func (s *Service) ExistingTagIDs(ctx context.Context, ids []int64) ([]int64, error) {
+	if len(ids) == 0 {
+		return []int64{}, nil
+	}
+	return taxonomydb.New(s.db.Primary).ExistingTagIDs(ctx, ids)
+}

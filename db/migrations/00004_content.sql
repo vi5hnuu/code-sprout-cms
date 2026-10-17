@@ -5,6 +5,13 @@
 --
 -- The body is Markdown + whitelisted directives (see docs/sprout-markdown.md), stored per
 -- revision. Nothing executable is ever stored.
+--
+-- Two independent state axes, so a live page stays live while an edit to it is reviewed:
+--   status       the item's life:      DRAFT (never live) → PUBLISHED (live) ⇄ ARCHIVED (taken down)
+--   review_state the pending draft:    NONE → IN_REVIEW → CHANGES_REQUESTED | APPROVED → SCHEDULED
+-- The content row's title/slug/summary/category are the *public face*: copied from the draft
+-- revision's meta at publish. Until first publish they mirror the draft, so the studio can list
+-- drafts and the slug is reserved early.
 
 -- +goose Up
 CREATE TABLE content (
@@ -14,21 +21,24 @@ CREATE TABLE content (
     slug                 text        NOT NULL CHECK (slug ~ '^[a-z0-9]+(-[a-z0-9]+)*$'),
     title                text        NOT NULL,
     summary              text,
-    status               text        NOT NULL DEFAULT 'DRAFT'
-        CHECK (status IN ('DRAFT', 'IN_REVIEW', 'CHANGES_REQUESTED', 'APPROVED', 'SCHEDULED', 'PUBLISHED', 'ARCHIVED')),
+    status               text        NOT NULL DEFAULT 'DRAFT' CHECK (status IN ('DRAFT', 'PUBLISHED', 'ARCHIVED')),
+    review_state         text        NOT NULL DEFAULT 'NONE'
+        CHECK (review_state IN ('NONE', 'IN_REVIEW', 'CHANGES_REQUESTED', 'APPROVED', 'SCHEDULED')),
     visibility           text        NOT NULL DEFAULT 'PUBLIC' CHECK (visibility IN ('PUBLIC', 'UNLISTED', 'PRIVATE')),
     access               text        NOT NULL DEFAULT 'FREE' CHECK (access IN ('FREE', 'PREMIUM')),
     author_id            bigint      NOT NULL REFERENCES app_user (id),
     primary_category_id  bigint      REFERENCES category (id) ON DELETE SET NULL,
     -- Revisions are numbered per content item. last_rev_no is the allocator; draft_rev_no is
     -- what the studio edits (and the If-Match value for optimistic concurrency);
-    -- published_rev_no is what readers see. Numbers instead of FKs because the revision
-    -- table is partitioned and its key is (content_id, rev_no).
+    -- published_rev_no is what readers see; draft_rev_no > published_rev_no means unpublished
+    -- changes. Numbers instead of FKs because the revision table is partitioned and keyed by
+    -- (content_id, rev_no).
     last_rev_no          int         NOT NULL DEFAULT 0,
-    draft_rev_no         int,
+    draft_rev_no         int         NOT NULL DEFAULT 0,
     published_rev_no     int,
-    scheduled_at         timestamptz,
+    scheduled_at         timestamptz,              -- SCHEDULED: when the worker publishes it
     published_at         timestamptz,              -- first publish; drives "latest" ordering
+    last_published_at    timestamptz,              -- most recent publish; sitemap lastmod, "updated" label
     translation_group_id bigint,                   -- items that are translations of each other share this
     created_at           timestamptz NOT NULL DEFAULT now(),
     updated_at           timestamptz NOT NULL DEFAULT now(),
@@ -36,7 +46,7 @@ CREATE TABLE content (
     CONSTRAINT ck_content_published_has_revision
         CHECK (status <> 'PUBLISHED' OR (published_rev_no IS NOT NULL AND published_at IS NOT NULL)),
     CONSTRAINT ck_content_scheduled_has_time
-        CHECK (status <> 'SCHEDULED' OR scheduled_at IS NOT NULL)
+        CHECK ((review_state = 'SCHEDULED') = (scheduled_at IS NOT NULL))
 );
 
 -- Soft-deleted rows release their slug so it can be reused.
@@ -49,13 +59,14 @@ CREATE INDEX idx_content_live_by_category ON content (primary_category_id, publi
     WHERE status = 'PUBLISHED' AND deleted_at IS NULL;
 
 -- Sitemap chunks are id ranges per type; INCLUDE makes chunk generation an index-only scan.
-CREATE INDEX idx_content_sitemap ON content (type, id) INCLUDE (locale, slug, updated_at)
+CREATE INDEX idx_content_sitemap ON content (type, id) INCLUDE (locale, slug, last_published_at)
     WHERE status = 'PUBLISHED' AND visibility = 'PUBLIC' AND deleted_at IS NULL;
 
 -- Studio: "my content", review queue, scheduler, admin title search.
-CREATE INDEX idx_content_author ON content (author_id, updated_at DESC) WHERE deleted_at IS NULL;
-CREATE INDEX idx_content_workflow ON content (status, updated_at)
-    WHERE status IN ('IN_REVIEW', 'APPROVED', 'SCHEDULED') AND deleted_at IS NULL;
+CREATE INDEX idx_content_author ON content (author_id, updated_at DESC, id DESC) WHERE deleted_at IS NULL;
+CREATE INDEX idx_content_review_queue ON content (review_state, updated_at, id)
+    WHERE review_state IN ('IN_REVIEW', 'APPROVED') AND deleted_at IS NULL;
+CREATE INDEX idx_content_scheduled ON content (scheduled_at) WHERE review_state = 'SCHEDULED' AND deleted_at IS NULL;
 CREATE INDEX idx_content_title_trgm ON content USING gin (title gin_trgm_ops);
 CREATE INDEX idx_content_translation ON content (translation_group_id) WHERE translation_group_id IS NOT NULL;
 
@@ -67,7 +78,7 @@ CREATE TABLE content_revision (
     rev_no          int         NOT NULL,
     body_md         text,
     body_sha256     bytea       NOT NULL,          -- skip no-op saves; dedupe on archive
-    meta            jsonb       NOT NULL DEFAULT '{}',  -- title/summary/taxonomy snapshot at this revision
+    meta            jsonb       NOT NULL DEFAULT '{}',  -- draft title/slug/summary/category/tags/type fields
     editor_id       bigint      NOT NULL,
     message         text,
     archive_file_id bigint,

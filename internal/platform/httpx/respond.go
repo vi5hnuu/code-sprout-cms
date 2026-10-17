@@ -61,17 +61,19 @@ type Problem struct {
 	Detail    string            `json:"detail,omitempty"`
 	Code      string            `json:"code"`
 	Errors    map[string]string `json:"errors,omitempty"`
+	Details   any               `json:"details,omitempty"`
 	RequestID string            `json:"requestId,omitempty"`
 }
 
 var kindStatus = map[apperr.Kind]int{
-	apperr.KindInvalid:            http.StatusBadRequest,
-	apperr.KindUnauthenticated:    http.StatusUnauthorized,
-	apperr.KindForbidden:          http.StatusForbidden,
-	apperr.KindNotFound:           http.StatusNotFound,
-	apperr.KindConflict:           http.StatusConflict,
-	apperr.KindPreconditionFailed: http.StatusPreconditionFailed,
-	apperr.KindRateLimited:        http.StatusTooManyRequests,
+	apperr.KindInvalid:              http.StatusBadRequest,
+	apperr.KindUnauthenticated:      http.StatusUnauthorized,
+	apperr.KindForbidden:            http.StatusForbidden,
+	apperr.KindNotFound:             http.StatusNotFound,
+	apperr.KindConflict:             http.StatusConflict,
+	apperr.KindPreconditionFailed:   http.StatusPreconditionFailed,
+	apperr.KindPreconditionRequired: http.StatusPreconditionRequired,
+	apperr.KindRateLimited:          http.StatusTooManyRequests,
 }
 
 // Error renders err as problem+json. Domain errors keep their code and detail; anything else
@@ -82,7 +84,7 @@ func Error(w http.ResponseWriter, r *http.Request, err error) {
 
 	if e, ok := apperr.As(err); ok && e.Kind != apperr.KindInternal {
 		p.Status = kindStatus[e.Kind]
-		p.Code, p.Detail, p.Errors = e.Code, e.Detail, e.Fields
+		p.Code, p.Detail, p.Errors, p.Details = e.Code, e.Detail, e.Fields, e.Details
 		if e.Err != nil {
 			slog.Debug("request failed", "request_id", reqID, "code", e.Code, "err", e.Err)
 		}

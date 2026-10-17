@@ -12,7 +12,7 @@ import (
 )
 
 type Entry struct {
-	ActorID  int64
+	ActorID  int64  // 0 = the system (e.g. the scheduled publisher)
 	Action   string // <entity>.<verb>, e.g. category.move, content.publish
 	Entity   string
 	EntityID int64
@@ -27,7 +27,11 @@ func Record(ctx context.Context, tx auditdb.DBTX, e Entry) error {
 	if e.Data == nil {
 		data = []byte("{}")
 	}
+	var actor *int64
+	if e.ActorID != 0 {
+		actor = &e.ActorID
+	}
 	return auditdb.New(tx).InsertAudit(ctx, auditdb.InsertAuditParams{
-		ActorID: &e.ActorID, Action: e.Action, Entity: e.Entity, EntityID: &e.EntityID, Data: data,
+		ActorID: actor, Action: e.Action, Entity: e.Entity, EntityID: &e.EntityID, Data: data,
 	})
 }

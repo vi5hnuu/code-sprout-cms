@@ -1,0 +1,196 @@
+-- ── Content rows ─────────────────────────────────────────────────────────────
+
+-- name: InsertContent :one
+INSERT INTO content (type, locale, slug, title, summary, visibility, access, author_id, primary_category_id)
+VALUES (sqlc.arg(type), sqlc.arg(locale), sqlc.arg(slug), sqlc.arg(title), sqlc.narg(summary),
+        sqlc.arg(visibility), sqlc.arg(access), sqlc.arg(author_id), sqlc.narg(primary_category_id))
+RETURNING id;
+
+-- name: GetContent :one
+SELECT * FROM content WHERE id = $1 AND deleted_at IS NULL;
+
+-- Every workflow change locks the row first, so concurrent saves/publishes serialise and the
+-- If-Match check is race-free.
+-- name: GetContentForUpdate :one
+SELECT * FROM content WHERE id = $1 AND deleted_at IS NULL FOR UPDATE;
+
+-- name: AllocateRevNo :one
+UPDATE content SET last_rev_no = last_rev_no + 1 WHERE id = $1 RETURNING last_rev_no;
+
+-- name: SetDraftRevision :exec
+UPDATE content SET draft_rev_no = sqlc.arg(rev_no), updated_at = now() WHERE id = sqlc.arg(id);
+
+-- Never-published content mirrors its draft so the studio lists current titles and the slug
+-- is reserved. Published content's public face only changes in PublishContent.
+-- name: MirrorDraftFace :exec
+UPDATE content
+SET slug = sqlc.arg(slug), title = sqlc.arg(title), summary = sqlc.narg(summary),
+    primary_category_id = sqlc.narg(primary_category_id), visibility = sqlc.arg(visibility),
+    access = sqlc.arg(access), updated_at = now()
+WHERE id = sqlc.arg(id) AND status = 'DRAFT';
+
+-- name: SlugTakenByOther :one
+SELECT EXISTS (
+    SELECT 1 FROM content
+    WHERE type = sqlc.arg(type) AND locale = sqlc.arg(locale) AND slug = sqlc.arg(slug)
+      AND id <> sqlc.arg(id) AND deleted_at IS NULL
+);
+
+-- name: SetReviewState :exec
+UPDATE content
+SET review_state = sqlc.arg(review_state), scheduled_at = sqlc.narg(scheduled_at), updated_at = now()
+WHERE id = sqlc.arg(id);
+
+-- name: PublishContent :one
+UPDATE content
+SET slug = sqlc.arg(slug), title = sqlc.arg(title), summary = sqlc.narg(summary),
+    primary_category_id = sqlc.narg(primary_category_id), visibility = sqlc.arg(visibility),
+    access = sqlc.arg(access), status = 'PUBLISHED', published_rev_no = sqlc.arg(rev_no)::int,
+    published_at = COALESCE(published_at, now()), last_published_at = now(),
+    review_state = 'NONE', scheduled_at = NULL, updated_at = now()
+WHERE id = sqlc.arg(id)
+RETURNING *;
+
+-- name: SetContentStatus :exec
+UPDATE content SET status = sqlc.arg(status), updated_at = now() WHERE id = sqlc.arg(id);
+
+-- name: SoftDeleteContent :exec
+UPDATE content SET deleted_at = now(), review_state = 'NONE', scheduled_at = NULL, updated_at = now()
+WHERE id = $1;
+
+-- ── Revisions ────────────────────────────────────────────────────────────────
+
+-- name: InsertRevision :exec
+INSERT INTO content_revision (content_id, rev_no, body_md, body_sha256, meta, editor_id, message)
+VALUES (sqlc.arg(content_id), sqlc.arg(rev_no), sqlc.arg(body_md), sqlc.arg(body_sha256),
+        sqlc.arg(meta), sqlc.arg(editor_id), sqlc.narg(message));
+
+-- name: GetRevision :one
+SELECT * FROM content_revision WHERE content_id = $1 AND rev_no = $2;
+
+-- History without bodies (bodies can be large; fetch one with GetRevision).
+-- name: ListRevisions :many
+SELECT rev_no, editor_id, message, created_at, (archive_file_id IS NOT NULL)::bool AS archived
+FROM content_revision
+WHERE content_id = sqlc.arg(content_id)
+  AND (sqlc.narg(before_rev)::int IS NULL OR rev_no < sqlc.narg(before_rev)::int)
+ORDER BY rev_no DESC
+LIMIT sqlc.arg(row_limit);
+
+-- ── Derived data written at publish ─────────────────────────────────────────
+
+-- name: UpsertRender :exec
+INSERT INTO content_render (content_id, rev_no, toc, plain_text, word_count, reading_minutes, snippet_count, rendered_at)
+VALUES (sqlc.arg(content_id), sqlc.arg(rev_no), sqlc.arg(toc), sqlc.arg(plain_text), sqlc.arg(word_count),
+        sqlc.arg(reading_minutes), sqlc.arg(snippet_count), now())
+ON CONFLICT (content_id) DO UPDATE
+SET rev_no = EXCLUDED.rev_no, toc = EXCLUDED.toc, plain_text = EXCLUDED.plain_text,
+    word_count = EXCLUDED.word_count, reading_minutes = EXCLUDED.reading_minutes,
+    snippet_count = EXCLUDED.snippet_count, rendered_at = now();
+
+-- name: GetRender :one
+SELECT * FROM content_render WHERE content_id = $1;
+
+-- name: DeleteContentAssets :exec
+DELETE FROM content_asset WHERE content_id = $1;
+
+-- name: InsertContentAssets :exec
+INSERT INTO content_asset (content_id, file_id)
+SELECT sqlc.arg(content_id), unnest(sqlc.arg(file_ids)::bigint[]);
+
+-- name: DeleteContentTags :exec
+DELETE FROM content_tag WHERE content_id = $1;
+
+-- name: InsertContentTags :exec
+INSERT INTO content_tag (tag_id, content_id, published_at)
+SELECT unnest(sqlc.arg(tag_ids)::bigint[]), sqlc.arg(content_id), sqlc.narg(published_at);
+
+-- Unpublish/archive takes the item out of tag listings without losing its tags.
+-- name: SetContentTagsPublishedAt :exec
+UPDATE content_tag SET published_at = sqlc.narg(published_at) WHERE content_id = sqlc.arg(content_id);
+
+-- name: ListContentTagIDs :many
+SELECT tag_id FROM content_tag WHERE content_id = $1 ORDER BY tag_id;
+
+-- name: DeleteLinksOfKind :exec
+DELETE FROM content_link WHERE from_id = sqlc.arg(from_id) AND kind = sqlc.arg(kind);
+
+-- name: InsertLinks :exec
+INSERT INTO content_link (from_id, kind, to_id, position)
+SELECT sqlc.arg(from_id), sqlc.arg(kind), t.id, t.pos::int
+FROM unnest(sqlc.arg(to_ids)::bigint[]) WITH ORDINALITY AS t(id, pos)
+ON CONFLICT DO NOTHING;
+
+-- name: LiveIDsBySlug :many
+SELECT id, slug FROM content
+WHERE type = sqlc.arg(type) AND locale = sqlc.arg(locale) AND slug = ANY (sqlc.arg(slugs)::text[])
+  AND status = 'PUBLISHED' AND deleted_at IS NULL;
+
+-- name: UpsertSlugRedirect :exec
+INSERT INTO slug_redirect (type, locale, old_slug, content_id)
+VALUES (sqlc.arg(type), sqlc.arg(locale), sqlc.arg(old_slug), sqlc.arg(content_id))
+ON CONFLICT (type, locale, old_slug) DO UPDATE SET content_id = EXCLUDED.content_id, created_at = now();
+
+-- A slug coming back into use stops redirecting.
+-- name: DeleteSlugRedirect :exec
+DELETE FROM slug_redirect WHERE type = sqlc.arg(type) AND locale = sqlc.arg(locale) AND old_slug = sqlc.arg(slug);
+
+-- name: UpsertArticleExt :exec
+INSERT INTO article_ext (content_id, level) VALUES ($1, $2)
+ON CONFLICT (content_id) DO UPDATE SET level = EXCLUDED.level;
+
+-- name: UpsertBlogExt :exec
+INSERT INTO blog_ext (content_id, cover_file_id) VALUES ($1, $2)
+ON CONFLICT (content_id) DO UPDATE SET cover_file_id = EXCLUDED.cover_file_id;
+
+-- name: InsertStats :exec
+INSERT INTO content_stats (content_id) VALUES ($1) ON CONFLICT DO NOTHING;
+
+-- ── Studio listings (keyset) ────────────────────────────────────────────────
+
+-- name: ListAuthorContent :many
+SELECT * FROM content
+WHERE author_id = sqlc.arg(author_id) AND deleted_at IS NULL
+  AND (sqlc.narg(after_updated)::timestamptz IS NULL
+       OR (updated_at, id) < (sqlc.narg(after_updated)::timestamptz, sqlc.narg(after_id)::bigint))
+ORDER BY updated_at DESC, id DESC
+LIMIT sqlc.arg(row_limit);
+
+-- Oldest-waiting first. The grant join is a row-level authorization filter: it has to live in
+-- SQL, because filtering after the LIMIT would return short or empty pages.
+-- name: ListReviewQueue :many
+SELECT c.* FROM content c
+WHERE c.review_state = ANY (sqlc.arg(states)::text[]) AND c.deleted_at IS NULL
+  AND (sqlc.narg(after_updated)::timestamptz IS NULL
+       OR (c.updated_at, c.id) > (sqlc.narg(after_updated)::timestamptz, sqlc.narg(after_id)::bigint))
+  AND (sqlc.arg(is_admin)::bool OR EXISTS (
+        SELECT 1 FROM cms_role_grant g
+        LEFT JOIN category scope ON scope.id = g.scope_category_id
+        LEFT JOIN category cat ON cat.id = c.primary_category_id
+        WHERE g.user_id = sqlc.arg(user_id) AND g.role = ANY (sqlc.arg(roles)::text[])
+          AND (g.scope_category_id IS NULL OR cat.path <@ scope.path)))
+ORDER BY c.updated_at, c.id
+LIMIT sqlc.arg(row_limit);
+
+-- name: ClaimDueScheduled :many
+SELECT id FROM content
+WHERE review_state = 'SCHEDULED' AND scheduled_at <= now() AND deleted_at IS NULL
+ORDER BY scheduled_at
+LIMIT sqlc.arg(row_limit)
+FOR UPDATE SKIP LOCKED;
+
+-- ── Reviews ─────────────────────────────────────────────────────────────────
+
+-- name: InsertReview :one
+INSERT INTO review (content_id, rev_no, reviewer_id, decision, summary)
+VALUES (sqlc.arg(content_id), sqlc.arg(rev_no), sqlc.arg(reviewer_id), sqlc.arg(decision), sqlc.narg(summary))
+RETURNING id, created_at;
+
+-- name: InsertReviewNote :exec
+INSERT INTO review_note (review_id, anchor, body) VALUES (sqlc.arg(review_id), sqlc.arg(anchor), sqlc.arg(body));
+
+-- name: ListReviews :many
+SELECT * FROM review WHERE content_id = $1 ORDER BY created_at DESC LIMIT 50;
+
+-- name: ListReviewNotes :many
+SELECT * FROM review_note WHERE review_id = ANY (sqlc.arg(review_ids)::bigint[]) ORDER BY id;

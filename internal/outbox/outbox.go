@@ -41,6 +41,8 @@ type ContentEvent struct {
 	Type   string `json:"type"`
 	Locale string `json:"locale"`
 	Slug   string `json:"slug"`
+	// OldSlug is set when a publish renamed the page, so its old URL is revalidated too.
+	OldSlug string `json:"oldSlug,omitempty"`
 }
 
 // Publish records an event. db must be the transaction that performs the change.

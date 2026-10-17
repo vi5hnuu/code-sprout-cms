@@ -18,7 +18,8 @@ const (
 	KindForbidden
 	KindNotFound
 	KindConflict
-	KindPreconditionFailed // stale If-Match: someone else saved first
+	KindPreconditionFailed   // stale If-Match: someone else saved first
+	KindPreconditionRequired // If-Match missing on a write that needs it
 	KindRateLimited
 )
 
@@ -29,7 +30,10 @@ type Error struct {
 	Code   string
 	Detail string
 	Fields map[string]string // per-field validation messages, for KindInvalid
-	Err    error             // wrapped cause, logged but never exposed
+	// Details is structured, client-facing context (e.g. the Markdown issues blocking a
+	// publish). Must be JSON-serialisable and safe to show.
+	Details any
+	Err     error // wrapped cause, logged but never exposed
 }
 
 func (e *Error) Error() string {

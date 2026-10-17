@@ -39,6 +39,10 @@ var satisfiedBy = map[Role][]string{
 	RoleAdmin:       {"ADMIN"},
 }
 
+// RolesSatisfying lists the grant roles that satisfy `role`, for SQL filters that must apply
+// the hierarchy themselves (e.g. a review queue scoped by grants).
+func RolesSatisfying(role Role) []string { return satisfiedBy[role] }
+
 type Policy struct{ q *accessdb.Queries }
 
 func NewPolicy(primary *pgxpool.Pool) *Policy { return &Policy{q: accessdb.New(primary)} }

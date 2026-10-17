@@ -100,3 +100,6 @@ FROM category WHERE parent_id IS NOT DISTINCT FROM sqlc.narg(parent_id)::bigint;
 
 -- name: MaxSubtreeDepth :one
 SELECT COALESCE(max(nlevel(path)), 0)::int FROM category WHERE path <@ sqlc.arg(path)::ltree;
+
+-- name: ExistingTagIDs :many
+SELECT id FROM tag WHERE id = ANY (sqlc.arg(ids)::bigint[]) ORDER BY id;

@@ -42,6 +42,30 @@ func (q *Queries) DeleteTag(ctx context.Context, id int64) error {
 	return err
 }
 
+const existingTagIDs = `-- name: ExistingTagIDs :many
+SELECT id FROM tag WHERE id = ANY ($1::bigint[]) ORDER BY id
+`
+
+func (q *Queries) ExistingTagIDs(ctx context.Context, ids []int64) ([]int64, error) {
+	rows, err := q.db.Query(ctx, existingTagIDs, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getCategory = `-- name: GetCategory :one
 
 SELECT id, parent_id, path, slug, name, description, position, seo, created_at, updated_at FROM category WHERE id = $1
