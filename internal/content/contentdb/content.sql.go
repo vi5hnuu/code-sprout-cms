@@ -49,6 +49,28 @@ func (q *Queries) ClaimDueScheduled(ctx context.Context, rowLimit int32) ([]int6
 	return items, nil
 }
 
+const countSitemapRange = `-- name: CountSitemapRange :one
+
+SELECT count(*)::int FROM content
+WHERE type = $1 AND id >= $2 AND id < $3
+  AND status = 'PUBLISHED' AND visibility = 'PUBLIC' AND deleted_at IS NULL
+`
+
+type CountSitemapRangeParams struct {
+	Type string
+	Lo   int64
+	Hi   int64
+}
+
+// ── Sitemaps ────────────────────────────────────────────────────────────────
+// Live public items in one id-range chunk (index-only on idx_content_sitemap).
+func (q *Queries) CountSitemapRange(ctx context.Context, arg CountSitemapRangeParams) (int32, error) {
+	row := q.db.QueryRow(ctx, countSitemapRange, arg.Type, arg.Lo, arg.Hi)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const deleteContentAssets = `-- name: DeleteContentAssets :exec
 DELETE FROM content_asset WHERE content_id = $1
 `
@@ -189,6 +211,61 @@ func (q *Queries) GetContentForUpdate(ctx context.Context, id int64) (Content, e
 	return i, err
 }
 
+const getIndexable = `-- name: GetIndexable :one
+SELECT c.id, c.type, c.locale, c.slug, c.title, c.summary, c.access, c.visibility, c.status,
+       c.published_at, c.last_published_at, c.deleted_at,
+       COALESCE(r.plain_text, '')::text AS plain_text,
+       COALESCE(cat.path::text, '')::text AS category_path,
+       COALESCE((SELECT array_agg(t.name ORDER BY t.name) FROM content_tag ct JOIN tag t ON t.id = ct.tag_id
+                 WHERE ct.content_id = c.id), '{}')::text[] AS tag_names
+FROM content c
+LEFT JOIN content_render r ON r.content_id = c.id
+LEFT JOIN category cat ON cat.id = c.primary_category_id
+WHERE c.id = $1
+`
+
+type GetIndexableRow struct {
+	ID              int64
+	Type            string
+	Locale          string
+	Slug            string
+	Title           string
+	Summary         *string
+	Access          string
+	Visibility      string
+	Status          string
+	PublishedAt     *time.Time
+	LastPublishedAt *time.Time
+	DeletedAt       *time.Time
+	PlainText       string
+	CategoryPath    string
+	TagNames        []string
+}
+
+// Everything search needs for one live item, in one round trip.
+func (q *Queries) GetIndexable(ctx context.Context, id int64) (GetIndexableRow, error) {
+	row := q.db.QueryRow(ctx, getIndexable, id)
+	var i GetIndexableRow
+	err := row.Scan(
+		&i.ID,
+		&i.Type,
+		&i.Locale,
+		&i.Slug,
+		&i.Title,
+		&i.Summary,
+		&i.Access,
+		&i.Visibility,
+		&i.Status,
+		&i.PublishedAt,
+		&i.LastPublishedAt,
+		&i.DeletedAt,
+		&i.PlainText,
+		&i.CategoryPath,
+		&i.TagNames,
+	)
+	return i, err
+}
+
 const getLiveBySlug = `-- name: GetLiveBySlug :one
 
 SELECT id, type, locale, slug, title, summary, status, review_state, visibility, access, author_id, primary_category_id, last_rev_no, draft_rev_no, published_rev_no, scheduled_at, published_at, last_published_at, translation_group_id, created_at, updated_at, deleted_at FROM content
@@ -230,6 +307,31 @@ func (q *Queries) GetLiveBySlug(ctx context.Context, arg GetLiveBySlugParams) (C
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const getPathParts = `-- name: GetPathParts :one
+SELECT c.type, c.locale, c.slug, COALESCE(split_part(cat.path::text, '.', 1), '')::text AS section
+FROM content c LEFT JOIN category cat ON cat.id = c.primary_category_id
+WHERE c.id = $1
+`
+
+type GetPathPartsRow struct {
+	Type    string
+	Locale  string
+	Slug    string
+	Section string
+}
+
+func (q *Queries) GetPathParts(ctx context.Context, id int64) (GetPathPartsRow, error) {
+	row := q.db.QueryRow(ctx, getPathParts, id)
+	var i GetPathPartsRow
+	err := row.Scan(
+		&i.Type,
+		&i.Locale,
+		&i.Slug,
+		&i.Section,
 	)
 	return i, err
 }
@@ -454,6 +556,52 @@ INSERT INTO content_stats (content_id) VALUES ($1) ON CONFLICT DO NOTHING
 func (q *Queries) InsertStats(ctx context.Context, contentID int64) error {
 	_, err := q.db.Exec(ctx, insertStats, contentID)
 	return err
+}
+
+const listArchivableRevisions = `-- name: ListArchivableRevisions :many
+
+SELECT r.content_id, r.rev_no, r.body_md
+FROM content_revision r
+JOIN content c ON c.id = r.content_id
+WHERE r.body_md IS NOT NULL AND r.created_at < $1
+  AND r.rev_no <= c.draft_rev_no - $2::int
+  AND r.rev_no IS DISTINCT FROM c.published_rev_no
+ORDER BY r.created_at
+LIMIT $3
+`
+
+type ListArchivableRevisionsParams struct {
+	Before   time.Time
+	Keep     int32
+	RowLimit int32
+}
+
+type ListArchivableRevisionsRow struct {
+	ContentID int64
+	RevNo     int32
+	BodyMd    *string
+}
+
+// ── Revision archiving ──────────────────────────────────────────────────────
+// Old bodies that are neither the draft, the live revision, nor among the latest `keep`.
+func (q *Queries) ListArchivableRevisions(ctx context.Context, arg ListArchivableRevisionsParams) ([]ListArchivableRevisionsRow, error) {
+	rows, err := q.db.Query(ctx, listArchivableRevisions, arg.Before, arg.Keep, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListArchivableRevisionsRow{}
+	for rows.Next() {
+		var i ListArchivableRevisionsRow
+		if err := rows.Scan(&i.ContentID, &i.RevNo, &i.BodyMd); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listAuthorContent = `-- name: ListAuthorContent :many
@@ -888,6 +1036,39 @@ func (q *Queries) ListLiveByType(ctx context.Context, arg ListLiveByTypeParams) 
 	return items, nil
 }
 
+const listLiveIDsAfter = `-- name: ListLiveIDsAfter :many
+SELECT id FROM content
+WHERE status = 'PUBLISHED' AND visibility = 'PUBLIC' AND deleted_at IS NULL AND id > $1
+ORDER BY id
+LIMIT $2
+`
+
+type ListLiveIDsAfterParams struct {
+	AfterID  int64
+	RowLimit int32
+}
+
+// Keyset walk over live public items, for full reindexes and reconciliation.
+func (q *Queries) ListLiveIDsAfter(ctx context.Context, arg ListLiveIDsAfterParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, listLiveIDsAfter, arg.AfterID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listLiveLinks = `-- name: ListLiveLinks :many
 SELECT l.kind, c.id, c.type, c.locale, c.slug, c.title
 FROM content_link l
@@ -1153,6 +1334,85 @@ func (q *Queries) ListRevisions(ctx context.Context, arg ListRevisionsParams) ([
 	return items, nil
 }
 
+const listSitemapChunks = `-- name: ListSitemapChunks :many
+SELECT type, chunk, url_count, lastmod FROM sitemap_chunk WHERE url_count > 0 ORDER BY type, chunk
+`
+
+func (q *Queries) ListSitemapChunks(ctx context.Context) ([]SitemapChunk, error) {
+	rows, err := q.db.Query(ctx, listSitemapChunks)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SitemapChunk{}
+	for rows.Next() {
+		var i SitemapChunk
+		if err := rows.Scan(
+			&i.Type,
+			&i.Chunk,
+			&i.UrlCount,
+			&i.Lastmod,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSitemapEntries = `-- name: ListSitemapEntries :many
+SELECT c.id, c.locale, c.slug, c.last_published_at, COALESCE(split_part(cat.path::text, '.', 1), '')::text AS section
+FROM content c
+LEFT JOIN category cat ON cat.id = c.primary_category_id
+WHERE c.type = $1 AND c.id >= $2 AND c.id < $3
+  AND c.status = 'PUBLISHED' AND c.visibility = 'PUBLIC' AND c.deleted_at IS NULL
+ORDER BY c.id
+`
+
+type ListSitemapEntriesParams struct {
+	Type string
+	Lo   int64
+	Hi   int64
+}
+
+type ListSitemapEntriesRow struct {
+	ID              int64
+	Locale          string
+	Slug            string
+	LastPublishedAt *time.Time
+	Section         string
+}
+
+// The root category slug builds article URLs (/{section}/{slug}).
+func (q *Queries) ListSitemapEntries(ctx context.Context, arg ListSitemapEntriesParams) ([]ListSitemapEntriesRow, error) {
+	rows, err := q.db.Query(ctx, listSitemapEntries, arg.Type, arg.Lo, arg.Hi)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSitemapEntriesRow{}
+	for rows.Next() {
+		var i ListSitemapEntriesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Locale,
+			&i.Slug,
+			&i.LastPublishedAt,
+			&i.Section,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const liveIDsBySlug = `-- name: LiveIDsBySlug :many
 SELECT id, slug FROM content
 WHERE type = $1 AND locale = $2 AND slug = ANY ($3::text[])
@@ -1188,6 +1448,22 @@ func (q *Queries) LiveIDsBySlug(ctx context.Context, arg LiveIDsBySlugParams) ([
 		return nil, err
 	}
 	return items, nil
+}
+
+const markRevisionArchived = `-- name: MarkRevisionArchived :exec
+UPDATE content_revision SET body_md = NULL, archive_file_id = $1
+WHERE content_id = $2 AND rev_no = $3 AND body_md IS NOT NULL
+`
+
+type MarkRevisionArchivedParams struct {
+	FileID    *int64
+	ContentID int64
+	RevNo     int32
+}
+
+func (q *Queries) MarkRevisionArchived(ctx context.Context, arg MarkRevisionArchivedParams) error {
+	_, err := q.db.Exec(ctx, markRevisionArchived, arg.FileID, arg.ContentID, arg.RevNo)
+	return err
 }
 
 const mirrorDraftFace = `-- name: MirrorDraftFace :exec
@@ -1498,6 +1774,22 @@ func (q *Queries) UpsertRender(ctx context.Context, arg UpsertRenderParams) erro
 		arg.ReadingMinutes,
 		arg.SnippetCount,
 	)
+	return err
+}
+
+const upsertSitemapChunk = `-- name: UpsertSitemapChunk :exec
+INSERT INTO sitemap_chunk (type, chunk, url_count, lastmod) VALUES ($1, $2, $3, now())
+ON CONFLICT (type, chunk) DO UPDATE SET url_count = EXCLUDED.url_count, lastmod = now()
+`
+
+type UpsertSitemapChunkParams struct {
+	Type     string
+	Chunk    int32
+	UrlCount int32
+}
+
+func (q *Queries) UpsertSitemapChunk(ctx context.Context, arg UpsertSitemapChunkParams) error {
+	_, err := q.db.Exec(ctx, upsertSitemapChunk, arg.Type, arg.Chunk, arg.UrlCount)
 	return err
 }
 

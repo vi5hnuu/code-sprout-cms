@@ -141,3 +141,15 @@ LIMIT sqlc.arg(row_limit);
 -- name: ResolveReports :exec
 UPDATE comment_report SET resolved_at = now(), resolved_by = sqlc.arg(resolver)
 WHERE comment_id = sqlc.arg(comment_id) AND resolved_at IS NULL;
+
+-- Recomputes likes and visible-comment counts for a batch of items from the rows themselves,
+-- repairing any drift in the incrementally maintained counters. Returns the batch's ids.
+-- name: ReconcileStats :many
+UPDATE content_stats s
+SET likes = (SELECT count(*) FROM reaction r WHERE r.content_id = s.content_id),
+    comments = (SELECT count(*) FROM comment c WHERE c.content_id = s.content_id AND c.status = 'VISIBLE'),
+    updated_at = now()
+WHERE s.content_id IN (
+    SELECT b.content_id FROM content_stats b WHERE b.content_id > sqlc.arg(after_id) ORDER BY b.content_id LIMIT sqlc.arg(row_limit)
+)
+RETURNING s.content_id;

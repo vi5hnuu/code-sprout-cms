@@ -90,6 +90,9 @@ CREATE TABLE content_revision (
     CHECK (body_md IS NOT NULL OR archive_file_id IS NOT NULL)
 ) PARTITION BY HASH (content_id);
 SELECT create_hash_partitions('content_revision', 16);
+-- Archiver candidates: only revisions still holding their body, so the index shrinks as
+-- bodies move to cold storage instead of growing with history.
+CREATE INDEX idx_content_revision_archivable ON content_revision (created_at) WHERE body_md IS NOT NULL;
 
 -- Derived from the published revision at publish time (never edited directly). Gives search,
 -- previews and the TOC their data without re-parsing Markdown on the read path.

@@ -30,9 +30,29 @@ type Config struct {
 	RedisAddr     string
 	RedisPassword string
 
-	Auth    AuthConfig
-	Storage StorageConfig
-	Judge   JudgeConfig
+	Auth     AuthConfig
+	Storage  StorageConfig
+	Judge    JudgeConfig
+	Search   SearchConfig
+	Delivery DeliveryConfig
+}
+
+// SearchConfig points at Meilisearch. Optional: without a URL, search answers 503.
+type SearchConfig struct {
+	URL    string
+	APIKey string
+	Index  string
+}
+
+// DeliveryConfig controls refreshing caches and search engines after content changes. Every
+// part is optional; unset parts are skipped.
+type DeliveryConfig struct {
+	RevalidateURL      string
+	RevalidateSecret   string
+	CloudflareZoneID   string
+	CloudflareAPIToken string
+	SiteURL            string
+	IndexNowKey        string
 }
 
 // JudgeConfig points at ls-judge. Optional: without a URL, running code answers 503 (useful
@@ -88,7 +108,13 @@ func Load() (Config, error) {
 			Audience: req("AUTH_AUDIENCE"),
 		},
 
-		Judge: JudgeConfig{URL: os.Getenv("JUDGE_URL"), APIKey: os.Getenv("JUDGE_API_KEY")},
+		Judge:  JudgeConfig{URL: os.Getenv("JUDGE_URL"), APIKey: os.Getenv("JUDGE_API_KEY")},
+		Search: SearchConfig{URL: os.Getenv("SEARCH_URL"), APIKey: os.Getenv("SEARCH_API_KEY"), Index: envOr("SEARCH_INDEX", "content")},
+		Delivery: DeliveryConfig{
+			RevalidateURL: os.Getenv("WEB_REVALIDATE_URL"), RevalidateSecret: os.Getenv("WEB_REVALIDATE_SECRET"),
+			CloudflareZoneID: os.Getenv("CLOUDFLARE_ZONE_ID"), CloudflareAPIToken: os.Getenv("CLOUDFLARE_API_TOKEN"),
+			SiteURL: os.Getenv("SITE_URL"), IndexNowKey: os.Getenv("INDEXNOW_KEY"),
+		},
 
 		Storage: StorageConfig{
 			Endpoint:      req("STORAGE_ENDPOINT"),

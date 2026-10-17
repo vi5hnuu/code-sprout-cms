@@ -83,3 +83,10 @@ type ReviewNote struct {
 	Body      string
 	CreatedAt time.Time
 }
+
+type SitemapChunk struct {
+	Type     string
+	Chunk    int32
+	UrlCount int32
+	Lastmod  time.Time
+}

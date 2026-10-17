@@ -4,6 +4,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -55,6 +56,9 @@ type Store interface {
 	// Open streams an object; limit > 0 reads only its first `limit` bytes.
 	Open(ctx context.Context, bucket, key string, limit int64) (io.ReadCloser, error)
 	Delete(ctx context.Context, bucket, key string) error
+	// Put writes a server-generated object (e.g. an archived revision). Client uploads never
+	// use this: they go straight to storage with PresignPut.
+	Put(ctx context.Context, bucket, key, contentType string, body []byte) error
 }
 
 type S3 struct {
@@ -147,4 +151,15 @@ func (s *S3) Delete(ctx context.Context, bucket, key string) error {
 // FromConfig builds the S3 client from process configuration.
 func FromConfig(c config.StorageConfig) *S3 {
 	return NewS3(Config{Endpoint: c.Endpoint, Region: c.Region, AccessKey: c.AccessKey, SecretKey: c.SecretKey})
+}
+
+func (s *S3) Put(ctx context.Context, bucket, key, contentType string, body []byte) error {
+	_, err := s.client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(bucket), Key: aws.String(key), ContentType: aws.String(contentType),
+		ContentLength: aws.Int64(int64(len(body))), Body: bytes.NewReader(body),
+	})
+	if err != nil {
+		return fmt.Errorf("put %s/%s: %w", bucket, key, err)
+	}
+	return nil
 }

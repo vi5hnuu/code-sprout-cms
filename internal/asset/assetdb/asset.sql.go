@@ -7,7 +7,17 @@ package assetdb
 
 import (
 	"context"
+	"time"
 )
+
+const deleteFile = `-- name: DeleteFile :exec
+DELETE FROM file WHERE id = $1
+`
+
+func (q *Queries) DeleteFile(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, deleteFile, id)
+	return err
+}
 
 const findReadyDuplicate = `-- name: FindReadyDuplicate :one
 SELECT id, owner_id, bucket, storage_key, mime, size_bytes, sha256, status, width, height, lease_until, purpose, created_at, completed_at FROM file
@@ -141,6 +151,35 @@ func (q *Queries) InsertFile(ctx context.Context, arg InsertFileParams) (File, e
 	return i, err
 }
 
+const insertReadyFile = `-- name: InsertReadyFile :one
+INSERT INTO file (owner_id, bucket, storage_key, mime, size_bytes, sha256, status, purpose, completed_at)
+VALUES (NULL, $1, $2, $3, $4, $5, 'READY', $6, now())
+RETURNING id
+`
+
+type InsertReadyFileParams struct {
+	Bucket     string
+	StorageKey string
+	Mime       string
+	SizeBytes  int64
+	Sha256     []byte
+	Purpose    string
+}
+
+func (q *Queries) InsertReadyFile(ctx context.Context, arg InsertReadyFileParams) (int64, error) {
+	row := q.db.QueryRow(ctx, insertReadyFile,
+		arg.Bucket,
+		arg.StorageKey,
+		arg.Mime,
+		arg.SizeBytes,
+		arg.Sha256,
+		arg.Purpose,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
 const leaseVerifyingFile = `-- name: LeaseVerifyingFile :one
 UPDATE file SET lease_until = now() + make_interval(secs => $1::int)
 WHERE id = (
@@ -184,6 +223,51 @@ SELECT id, owner_id, bucket, storage_key, mime, size_bytes, sha256, status, widt
 
 func (q *Queries) ListFilesByID(ctx context.Context, ids []int64) ([]File, error) {
 	rows, err := q.db.Query(ctx, listFilesByID, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []File{}
+	for rows.Next() {
+		var i File
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerID,
+			&i.Bucket,
+			&i.StorageKey,
+			&i.Mime,
+			&i.SizeBytes,
+			&i.Sha256,
+			&i.Status,
+			&i.Width,
+			&i.Height,
+			&i.LeaseUntil,
+			&i.Purpose,
+			&i.CreatedAt,
+			&i.CompletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listStaleFiles = `-- name: ListStaleFiles :many
+SELECT id, owner_id, bucket, storage_key, mime, size_bytes, sha256, status, width, height, lease_until, purpose, created_at, completed_at FROM file WHERE status = $1 AND created_at < $2 ORDER BY created_at LIMIT $3
+`
+
+type ListStaleFilesParams struct {
+	Status   string
+	Before   time.Time
+	RowLimit int32
+}
+
+func (q *Queries) ListStaleFiles(ctx context.Context, arg ListStaleFilesParams) ([]File, error) {
+	rows, err := q.db.Query(ctx, listStaleFiles, arg.Status, arg.Before, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}

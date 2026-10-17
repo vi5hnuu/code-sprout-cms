@@ -10,16 +10,41 @@ import (
 	"time"
 )
 
-const claimDueEvents = `-- name: ClaimDueEvents :many
-SELECT id, created_at, topic, aggregate_id, payload, attempts
-FROM outbox
-WHERE processed_at IS NULL AND available_at <= now()
-ORDER BY available_at, id
-LIMIT $1
-FOR UPDATE SKIP LOCKED
+const insertEvent = `-- name: InsertEvent :exec
+INSERT INTO outbox (topic, aggregate_id, payload) VALUES ($1, $2, $3)
 `
 
-type ClaimDueEventsRow struct {
+type InsertEventParams struct {
+	Topic       string
+	AggregateID int64
+	Payload     []byte
+}
+
+func (q *Queries) InsertEvent(ctx context.Context, arg InsertEventParams) error {
+	_, err := q.db.Exec(ctx, insertEvent, arg.Topic, arg.AggregateID, arg.Payload)
+	return err
+}
+
+const leaseDueEvents = `-- name: LeaseDueEvents :many
+UPDATE outbox o
+SET available_at = now() + make_interval(secs => $1::int)
+FROM (
+    SELECT created_at, id FROM outbox
+    WHERE processed_at IS NULL AND available_at <= now()
+    ORDER BY available_at, id
+    LIMIT $2
+    FOR UPDATE SKIP LOCKED
+) due
+WHERE o.created_at = due.created_at AND o.id = due.id
+RETURNING o.id, o.created_at, o.topic, o.aggregate_id, o.payload, o.attempts
+`
+
+type LeaseDueEventsParams struct {
+	LeaseSeconds int32
+	Batch        int32
+}
+
+type LeaseDueEventsRow struct {
 	ID          int64
 	CreatedAt   time.Time
 	Topic       string
@@ -28,17 +53,18 @@ type ClaimDueEventsRow struct {
 	Attempts    int32
 }
 
-// Claims due events. SKIP LOCKED lets any number of workers share the queue without
-// double-processing; locks are held until the claiming transaction commits.
-func (q *Queries) ClaimDueEvents(ctx context.Context, limit int32) ([]ClaimDueEventsRow, error) {
-	rows, err := q.db.Query(ctx, claimDueEvents, limit)
+// Leases a batch of due events: pushing available_at forward hides them from other workers
+// for the lease, so handlers run outside any transaction. If the worker dies, the lease
+// lapses and the events are delivered again (at-least-once).
+func (q *Queries) LeaseDueEvents(ctx context.Context, arg LeaseDueEventsParams) ([]LeaseDueEventsRow, error) {
+	rows, err := q.db.Query(ctx, leaseDueEvents, arg.LeaseSeconds, arg.Batch)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []ClaimDueEventsRow{}
+	items := []LeaseDueEventsRow{}
 	for rows.Next() {
-		var i ClaimDueEventsRow
+		var i LeaseDueEventsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.CreatedAt,
@@ -55,21 +81,6 @@ func (q *Queries) ClaimDueEvents(ctx context.Context, limit int32) ([]ClaimDueEv
 		return nil, err
 	}
 	return items, nil
-}
-
-const insertEvent = `-- name: InsertEvent :exec
-INSERT INTO outbox (topic, aggregate_id, payload) VALUES ($1, $2, $3)
-`
-
-type InsertEventParams struct {
-	Topic       string
-	AggregateID int64
-	Payload     []byte
-}
-
-func (q *Queries) InsertEvent(ctx context.Context, arg InsertEventParams) error {
-	_, err := q.db.Exec(ctx, insertEvent, arg.Topic, arg.AggregateID, arg.Payload)
-	return err
 }
 
 const markFailed = `-- name: MarkFailed :exec

@@ -189,3 +189,29 @@ func (s *Service) RunCounterFlusher(ctx context.Context, interval time.Duration)
 		}
 	}
 }
+
+const reconcileBatch = 1000
+
+// Reconcile recomputes likes and comment counts for every item, in batches with a pause between
+// them so a full pass over millions of items never starves live traffic. Run nightly.
+func (s *Service) Reconcile(ctx context.Context, pause time.Duration) error {
+	q := engagementdb.New(s.db.Primary)
+	var after int64
+	for {
+		ids, err := q.ReconcileStats(ctx, engagementdb.ReconcileStatsParams{AfterID: after, RowLimit: reconcileBatch})
+		if err != nil {
+			return err
+		}
+		if len(ids) == 0 {
+			return nil
+		}
+		for _, id := range ids {
+			after = max(after, id)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(pause):
+		}
+	}
+}

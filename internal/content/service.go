@@ -23,9 +23,11 @@ import (
 	"code-sprout-cms/internal/taxonomy"
 )
 
-// Assets resolves asset:<id> references (implemented by asset.Service).
+// Assets resolves asset:<id> references and stores/reads archived revisions (implemented by
+// asset.Service).
 type Assets interface {
 	Describe(ctx context.Context, ids []int64) (map[int64]asset.File, error)
+	Archive
 }
 
 // Taxonomy validates category and tag ids (implemented by taxonomy.Service).
@@ -268,13 +270,28 @@ func revisionOf(ctx context.Context, q *contentdb.Queries, id int64, rev int32) 
 	}
 	// Only old, superseded revisions are ever archived; draft and live revisions keep bodies.
 	if r.BodyMd == nil {
-		return r, Meta{}, "", apperr.Conflict("content.revision_archived", "This revision is archived and cannot be loaded here.")
+		return r, Meta{}, "", errArchived
 	}
 	var m Meta
 	if err := json.Unmarshal(r.Meta, &m); err != nil {
 		return r, Meta{}, "", fmt.Errorf("content %d rev %d: meta: %w", id, rev, err)
 	}
 	return r, m, *r.BodyMd, nil
+}
+
+var errArchived = errors.New("revision body is archived")
+
+// anyRevision loads a revision, fetching its body from cold storage when archived.
+func (s *Service) anyRevision(ctx context.Context, q *contentdb.Queries, id int64, rev int32) (contentdb.ContentRevision, Meta, string, error) {
+	r, meta, body, err := revisionOf(ctx, q, id, rev)
+	if !errors.Is(err, errArchived) {
+		return r, meta, body, err
+	}
+	if err := json.Unmarshal(r.Meta, &meta); err != nil {
+		return r, Meta{}, "", fmt.Errorf("content %d rev %d: meta: %w", id, rev, err)
+	}
+	body, err = readArchived(ctx, s.assets, *r.ArchiveFileID)
+	return r, meta, body, err
 }
 
 // ListMine lists the caller's own items, most recently updated first.
@@ -350,7 +367,7 @@ func (s *Service) RevisionDetail(ctx context.Context, p auth.Principal, id int64
 	if _, err := s.viewable(ctx, q, p, id); err != nil {
 		return RevisionDetail{}, err
 	}
-	r, meta, body, err := revisionOf(ctx, q, id, rev)
+	r, meta, body, err := s.anyRevision(ctx, q, id, rev)
 	if err != nil {
 		return RevisionDetail{}, err
 	}
@@ -372,7 +389,7 @@ func (s *Service) Restore(ctx context.Context, p auth.Principal, id int64, rev i
 		if c.DraftRevNo != ifMatch {
 			return staleRevision(c.DraftRevNo)
 		}
-		_, meta, body, err := revisionOf(ctx, q, id, rev)
+		_, meta, body, err := s.anyRevision(ctx, q, id, rev)
 		if err != nil {
 			return err
 		}

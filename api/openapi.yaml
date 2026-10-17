@@ -43,6 +43,8 @@ tags:
     description: Running code, submissions, progress and stats (executed by ls-judge).
   - name: library
     description: A reader's notes and collections.
+  - name: search
+    description: Search and sitemaps.
   - name: taxonomy
     description: Category tree (site sections) and tags.
   - name: studio
@@ -1745,6 +1747,97 @@ paths:
         "200": { $ref: "#/components/responses/CollectionView" }
         "404": { $ref: "#/components/responses/Problem" }
 
+  /v1/public/search:
+    get:
+      tags: [search]
+      operationId: search
+      summary: Full-text search over live public content.
+      description: |
+        Ranked by relevance, so paging is by offset (capped at 1000). Matches in `title` and
+        `snippet` are wrapped in U+E000 … U+E001: HTML-escape the text, then replace the markers
+        with <mark> tags.
+      security: []
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string, minLength: 2, maxLength: 200 } }
+        - { name: type, in: query, schema: { type: string, enum: [article, blog, problem, topic_page, quiz] } }
+        - { name: difficulty, in: query, schema: { $ref: "#/components/schemas/Difficulty" } }
+        - { name: locale, in: query, schema: { type: string, default: en } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, maximum: 1000, default: 0 } }
+      responses:
+        "200":
+          description: Results
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SearchResult" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /v1/admin/search/reindex:
+    post:
+      tags: [search]
+      operationId: reindexSearch
+      summary: Rebuild the search index from the database (ADMIN). Runs in the worker, chunk by chunk.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "202": { description: Started }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+  /v1/public/sitemaps:
+    get:
+      tags: [search]
+      operationId: listSitemaps
+      summary: Sitemap chunks for the sitemap index.
+      description: Each chunk is a fixed id range of 50,000 per type, so older chunks rarely change.
+      security: []
+      responses:
+        "200":
+          description: Chunks
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [type, chunk, urlCount, lastmod]
+                      properties:
+                        type: { $ref: "#/components/schemas/ContentType" }
+                        chunk: { type: integer }
+                        urlCount: { type: integer }
+                        lastmod: { type: string, format: date-time }
+        "429": { $ref: "#/components/responses/Problem" }
+  /v1/public/sitemaps/{type}/{chunk}:
+    get:
+      tags: [search]
+      operationId: getSitemapChunk
+      summary: The site paths in one sitemap chunk.
+      security: []
+      parameters:
+        - { name: type, in: path, required: true, schema: { type: string, enum: [article, blog, problem, topic_page, quiz] } }
+        - { name: chunk, in: path, required: true, schema: { type: integer, minimum: 0 } }
+      responses:
+        "200":
+          description: Entries
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [path, lastmod]
+                      properties:
+                        path: { type: string, description: "Canonical site path, e.g. /dsa/binary-search." }
+                        lastmod: { type: string, format: date-time }
+        "404": { $ref: "#/components/responses/Problem" }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -2543,3 +2636,26 @@ components:
         visibility: { type: string, enum: [PUBLIC, UNLISTED, PRIVATE] }
         itemCount: { type: integer }
         updatedAt: { type: string, format: date-time }
+
+    SearchResult:
+      type: object
+      required: [hits, estimatedTotal, offset, limit]
+      properties:
+        hits:
+          type: array
+          items:
+            type: object
+            required: [id, type, locale, slug, title, snippet, category, publishedAt]
+            properties:
+              id: { type: integer, format: int64 }
+              type: { $ref: "#/components/schemas/ContentType" }
+              locale: { type: string }
+              slug: { type: string }
+              title: { type: string }
+              snippet: { type: string }
+              category: { type: string }
+              difficulty: { type: string }
+              publishedAt: { type: integer, description: Unix seconds. }
+        estimatedTotal: { type: integer }
+        offset: { type: integer }
+        limit: { type: integer }

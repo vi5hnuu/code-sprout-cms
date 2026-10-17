@@ -17,6 +17,7 @@ import (
 	"code-sprout-cms/internal/access"
 	"code-sprout-cms/internal/asset"
 	"code-sprout-cms/internal/content"
+	"code-sprout-cms/internal/delivery"
 	"code-sprout-cms/internal/engagement"
 	"code-sprout-cms/internal/judge"
 	"code-sprout-cms/internal/maintenance"
@@ -25,6 +26,7 @@ import (
 	"code-sprout-cms/internal/platform/db"
 	"code-sprout-cms/internal/platform/storage"
 	"code-sprout-cms/internal/problem"
+	"code-sprout-cms/internal/search"
 	"code-sprout-cms/internal/submission"
 	"code-sprout-cms/internal/taxonomy"
 	"code-sprout-cms/internal/user"
@@ -71,6 +73,18 @@ func run() error {
 	problems := problem.NewService(database, contents, reader, assets, policy)
 	submissions := submission.NewService(database, rdb, judge.New(cfg.Judge.URL, cfg.Judge.APIKey), problems, problems, reader)
 
+	// Outbox consumers: everything outside the database that mirrors content.
+	enqueue := func(ctx context.Context, topic string, id int64, payload any) error {
+		return outbox.Publish(ctx, database.Primary, topic, id, payload)
+	}
+	search.NewIndexer(search.NewMeili(cfg.Search.URL, cfg.Search.APIKey, cfg.Search.Index), reader, problems, enqueue).Register(dispatcher)
+	dc := cfg.Delivery
+	delivery.NewService(delivery.Config{
+		RevalidateURL: dc.RevalidateURL, RevalidateSecret: dc.RevalidateSecret,
+		CloudflareZoneID: dc.CloudflareZoneID, CloudflareAPIToken: dc.CloudflareAPIToken,
+		SiteURL: dc.SiteURL, IndexNowKey: dc.IndexNowKey,
+	}, reader, content.NewSitemaps(database)).Register(dispatcher)
+
 	var wg sync.WaitGroup
 	wg.Go(func() { dispatcher.Run(ctx) })
 	wg.Go(func() { maintenance.KeepPartitionsAhead(ctx, database.Primary) })
@@ -78,6 +92,34 @@ func run() error {
 	wg.Go(func() { contents.RunScheduler(ctx, 30*time.Second) })
 	wg.Go(func() { engagements.RunCounterFlusher(ctx, 30*time.Second) })
 	wg.Go(func() { submissions.RunQueue(ctx, time.Second) })
+
+	// Periodic upkeep. Each job is idempotent, so running on several replicas is safe.
+	wg.Go(func() {
+		maintenance.Every(ctx, "upload-gc", time.Hour, func(ctx context.Context) error {
+			_, err := assets.CollectGarbage(ctx)
+			return err
+		})
+	})
+	wg.Go(func() {
+		maintenance.Every(ctx, "revision-archive", 6*time.Hour, func(ctx context.Context) error {
+			for {
+				n, err := contents.ArchiveRevisions(ctx, assets)
+				if err != nil || n == 0 {
+					return err
+				}
+			}
+		})
+	})
+	wg.Go(func() {
+		maintenance.Every(ctx, "stats-reconcile", 24*time.Hour, func(ctx context.Context) error {
+			return engagements.Reconcile(ctx, 200*time.Millisecond)
+		})
+	})
+	wg.Go(func() {
+		maintenance.Every(ctx, "outbox-prune", 24*time.Hour, func(ctx context.Context) error {
+			return maintenance.PruneOutbox(ctx, database.Primary)
+		})
+	})
 
 	slog.Info("worker started")
 	wg.Wait()

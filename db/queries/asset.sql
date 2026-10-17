@@ -42,3 +42,14 @@ RETURNING *;
 
 -- name: ListFilesByID :many
 SELECT * FROM file WHERE id = ANY (sqlc.arg(ids)::bigint[]);
+
+-- name: ListStaleFiles :many
+SELECT * FROM file WHERE status = sqlc.arg(status) AND created_at < sqlc.arg(before) ORDER BY created_at LIMIT sqlc.arg(row_limit);
+
+-- name: DeleteFile :exec
+DELETE FROM file WHERE id = $1;
+
+-- name: InsertReadyFile :one
+INSERT INTO file (owner_id, bucket, storage_key, mime, size_bytes, sha256, status, purpose, completed_at)
+VALUES (NULL, sqlc.arg(bucket), sqlc.arg(storage_key), sqlc.arg(mime), sqlc.arg(size_bytes), sqlc.arg(sha256), 'READY', sqlc.arg(purpose), now())
+RETURNING id;

@@ -281,3 +281,69 @@ SELECT content_id FROM content_tag
 WHERE tag_id = sqlc.arg(tag_id) AND published_at IS NOT NULL
 ORDER BY published_at DESC, content_id DESC
 LIMIT sqlc.arg(row_limit);
+
+-- Everything search needs for one live item, in one round trip.
+-- name: GetIndexable :one
+SELECT c.id, c.type, c.locale, c.slug, c.title, c.summary, c.access, c.visibility, c.status,
+       c.published_at, c.last_published_at, c.deleted_at,
+       COALESCE(r.plain_text, '')::text AS plain_text,
+       COALESCE(cat.path::text, '')::text AS category_path,
+       COALESCE((SELECT array_agg(t.name ORDER BY t.name) FROM content_tag ct JOIN tag t ON t.id = ct.tag_id
+                 WHERE ct.content_id = c.id), '{}')::text[] AS tag_names
+FROM content c
+LEFT JOIN content_render r ON r.content_id = c.id
+LEFT JOIN category cat ON cat.id = c.primary_category_id
+WHERE c.id = $1;
+
+-- Keyset walk over live public items, for full reindexes and reconciliation.
+-- name: ListLiveIDsAfter :many
+SELECT id FROM content
+WHERE status = 'PUBLISHED' AND visibility = 'PUBLIC' AND deleted_at IS NULL AND id > sqlc.arg(after_id)
+ORDER BY id
+LIMIT sqlc.arg(row_limit);
+
+-- ── Sitemaps ────────────────────────────────────────────────────────────────
+
+-- Live public items in one id-range chunk (index-only on idx_content_sitemap).
+-- name: CountSitemapRange :one
+SELECT count(*)::int FROM content
+WHERE type = sqlc.arg(type) AND id >= sqlc.arg(lo) AND id < sqlc.arg(hi)
+  AND status = 'PUBLISHED' AND visibility = 'PUBLIC' AND deleted_at IS NULL;
+
+-- name: UpsertSitemapChunk :exec
+INSERT INTO sitemap_chunk (type, chunk, url_count, lastmod) VALUES (sqlc.arg(type), sqlc.arg(chunk), sqlc.arg(url_count), now())
+ON CONFLICT (type, chunk) DO UPDATE SET url_count = EXCLUDED.url_count, lastmod = now();
+
+-- name: ListSitemapChunks :many
+SELECT * FROM sitemap_chunk WHERE url_count > 0 ORDER BY type, chunk;
+
+-- The root category slug builds article URLs (/{section}/{slug}).
+-- name: ListSitemapEntries :many
+SELECT c.id, c.locale, c.slug, c.last_published_at, COALESCE(split_part(cat.path::text, '.', 1), '')::text AS section
+FROM content c
+LEFT JOIN category cat ON cat.id = c.primary_category_id
+WHERE c.type = sqlc.arg(type) AND c.id >= sqlc.arg(lo) AND c.id < sqlc.arg(hi)
+  AND c.status = 'PUBLISHED' AND c.visibility = 'PUBLIC' AND c.deleted_at IS NULL
+ORDER BY c.id;
+
+-- name: GetPathParts :one
+SELECT c.type, c.locale, c.slug, COALESCE(split_part(cat.path::text, '.', 1), '')::text AS section
+FROM content c LEFT JOIN category cat ON cat.id = c.primary_category_id
+WHERE c.id = $1;
+
+-- ── Revision archiving ──────────────────────────────────────────────────────
+
+-- Old bodies that are neither the draft, the live revision, nor among the latest `keep`.
+-- name: ListArchivableRevisions :many
+SELECT r.content_id, r.rev_no, r.body_md
+FROM content_revision r
+JOIN content c ON c.id = r.content_id
+WHERE r.body_md IS NOT NULL AND r.created_at < sqlc.arg(before)
+  AND r.rev_no <= c.draft_rev_no - sqlc.arg(keep)::int
+  AND r.rev_no IS DISTINCT FROM c.published_rev_no
+ORDER BY r.created_at
+LIMIT sqlc.arg(row_limit);
+
+-- name: MarkRevisionArchived :exec
+UPDATE content_revision SET body_md = NULL, archive_file_id = sqlc.arg(file_id)
+WHERE content_id = sqlc.arg(content_id) AND rev_no = sqlc.arg(rev_no) AND body_md IS NOT NULL;

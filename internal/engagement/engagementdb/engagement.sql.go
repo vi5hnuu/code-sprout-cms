@@ -820,6 +820,44 @@ func (q *Queries) ReactedIDs(ctx context.Context, arg ReactedIDsParams) ([]int64
 	return items, nil
 }
 
+const reconcileStats = `-- name: ReconcileStats :many
+UPDATE content_stats s
+SET likes = (SELECT count(*) FROM reaction r WHERE r.content_id = s.content_id),
+    comments = (SELECT count(*) FROM comment c WHERE c.content_id = s.content_id AND c.status = 'VISIBLE'),
+    updated_at = now()
+WHERE s.content_id IN (
+    SELECT b.content_id FROM content_stats b WHERE b.content_id > $1 ORDER BY b.content_id LIMIT $2
+)
+RETURNING s.content_id
+`
+
+type ReconcileStatsParams struct {
+	AfterID  int64
+	RowLimit int32
+}
+
+// Recomputes likes and visible-comment counts for a batch of items from the rows themselves,
+// repairing any drift in the incrementally maintained counters. Returns the batch's ids.
+func (q *Queries) ReconcileStats(ctx context.Context, arg ReconcileStatsParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, reconcileStats, arg.AfterID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var content_id int64
+		if err := rows.Scan(&content_id); err != nil {
+			return nil, err
+		}
+		items = append(items, content_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const resolveReports = `-- name: ResolveReports :exec
 UPDATE comment_report SET resolved_at = now(), resolved_by = $1
 WHERE comment_id = $2 AND resolved_at IS NULL

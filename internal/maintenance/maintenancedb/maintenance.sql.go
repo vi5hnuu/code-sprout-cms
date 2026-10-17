@@ -9,6 +9,17 @@ import (
 	"context"
 )
 
+const dropProcessedOutboxPartitions = `-- name: DropProcessedOutboxPartitions :one
+SELECT drop_processed_outbox_partitions($1::int)::int
+`
+
+func (q *Queries) DropProcessedOutboxPartitions(ctx context.Context, retentionDays int32) (int32, error) {
+	row := q.db.QueryRow(ctx, dropProcessedOutboxPartitions, retentionDays)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const ensureMonthlyPartitions = `-- name: EnsureMonthlyPartitions :exec
 SELECT create_monthly_partitions($1::text::regclass, current_date, $2::int)
 `

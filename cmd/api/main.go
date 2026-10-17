@@ -22,6 +22,7 @@ import (
 	"code-sprout-cms/internal/engagement"
 	"code-sprout-cms/internal/judge"
 	"code-sprout-cms/internal/library"
+	"code-sprout-cms/internal/outbox"
 	"code-sprout-cms/internal/platform/apperr"
 	"code-sprout-cms/internal/platform/config"
 	"code-sprout-cms/internal/platform/db"
@@ -29,6 +30,7 @@ import (
 	"code-sprout-cms/internal/platform/ratelimit"
 	"code-sprout-cms/internal/platform/storage"
 	"code-sprout-cms/internal/problem"
+	"code-sprout-cms/internal/search"
 	"code-sprout-cms/internal/submission"
 	"code-sprout-cms/internal/taxonomy"
 	"code-sprout-cms/internal/user"
@@ -94,7 +96,15 @@ func run() error {
 	library.NewNotes(database, reader).Routes(api, auth.RequireUser)
 	collection.NewHandler(collection.NewService(database, reader, policy)).Routes(api, auth.RequireUser)
 
+	content.NewSitemaps(database).Routes(api)
+
 	problems := problem.NewService(database, contents, reader, assets, policy)
+	searchIndex := search.NewMeili(cfg.Search.URL, cfg.Search.APIKey, cfg.Search.Index)
+	enqueue := func(ctx context.Context, topic string, id int64, payload any) error {
+		return outbox.Publish(ctx, database.Primary, topic, id, payload)
+	}
+	search.NewHandler(searchIndex, search.NewIndexer(searchIndex, reader, problems, enqueue), policy).Routes(api, auth.RequireUser,
+		limiter.Middleware("search", ratelimit.PerMinute(60, 20), clientIP))
 	problem.NewHandler(problems).Routes(api, auth.RequireUser)
 	submissions := submission.NewService(database, rdb, judge.New(cfg.Judge.URL, cfg.Judge.APIKey), problems, problems, reader)
 	submission.NewHandler(submissions, clientIP).Routes(api, auth.RequireUser, submission.Limits{

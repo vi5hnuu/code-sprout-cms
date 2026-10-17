@@ -54,6 +54,34 @@ CREATE TABLE outbox (
 SELECT create_monthly_partitions('outbox', current_date, 4);
 CREATE INDEX idx_outbox_pending ON outbox (available_at, id) WHERE processed_at IS NULL;
 
+-- Drops outbox partitions that ended more than retention_days ago and hold no undelivered
+-- event. Whole partitions go at once: instant, and no vacuum debt from mass DELETEs. Returns
+-- how many were dropped.
+-- +goose StatementBegin
+CREATE FUNCTION drop_processed_outbox_partitions(retention_days int) RETURNS int
+LANGUAGE plpgsql AS $$
+DECLARE
+    part record;
+    upper_bound date;
+    dropped int := 0;
+BEGIN
+    FOR part IN
+        SELECT c.oid, c.relname, c.relpartbound FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid
+        WHERE i.inhparent = 'outbox'::regclass
+    LOOP
+        upper_bound := (regexp_match(pg_get_expr(part.relpartbound, part.oid), 'TO \(''([^'']+)''\)'))[1]::date;
+        CONTINUE WHEN upper_bound IS NULL OR upper_bound > current_date - retention_days;
+        CONTINUE WHEN EXISTS (
+            SELECT 1 FROM outbox WHERE processed_at IS NULL AND created_at < upper_bound
+        );
+        EXECUTE format('DROP TABLE %I', part.relname);
+        dropped := dropped + 1;
+    END LOOP;
+    RETURN dropped;
+END;
+$$;
+-- +goose StatementEnd
+
 -- One row per sitemap file. A chunk is a fixed content-id range (chunk = id / 50000), so new
 -- content only ever touches the newest chunk and older files stay byte-stable for crawlers.
 CREATE TABLE sitemap_chunk (
@@ -65,6 +93,7 @@ CREATE TABLE sitemap_chunk (
 );
 
 -- +goose Down
+DROP FUNCTION drop_processed_outbox_partitions(int);
 DROP TABLE sitemap_chunk;
 DROP TABLE outbox;
 DROP TABLE audit_log;

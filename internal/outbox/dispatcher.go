@@ -8,8 +8,6 @@ import (
 	"math"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-
 	"code-sprout-cms/internal/outbox/outboxdb"
 	"code-sprout-cms/internal/platform/db"
 )
@@ -57,37 +55,36 @@ func (d *Dispatcher) Run(ctx context.Context) {
 	}
 }
 
-// dispatchBatch claims a batch, runs handlers, and records each outcome, all in one
-// transaction, so a crash mid-batch releases the row locks and the events are simply
-// claimed again. Batches stay small so the transaction stays short.
+// leaseFor bounds how long one batch may take before its events are handed to another worker.
+// Handlers call external services (search, CDN, Next.js), each with its own short timeout.
+const leaseFor = 5 * time.Minute
+
+// dispatchBatch leases a batch in a short transaction, then runs handlers outside any
+// transaction (so slow downstream calls never hold locks or a connection) and records each
+// outcome individually.
 func (d *Dispatcher) dispatchBatch(ctx context.Context) (int, error) {
-	var n int
-	err := d.db.InTx(ctx, func(tx pgx.Tx) error {
-		q := outboxdb.New(tx)
-		rows, err := q.ClaimDueEvents(ctx, d.batch)
-		if err != nil {
-			return fmt.Errorf("claim: %w", err)
-		}
-		n = len(rows)
-		for _, row := range rows {
-			e := Event{ID: row.ID, Topic: row.Topic, AggregateID: row.AggregateID, Payload: row.Payload, Attempts: row.Attempts}
-			if herr := d.handle(ctx, e); herr != nil {
-				slog.Warn("outbox event failed", "id", e.ID, "topic", e.Topic, "attempt", e.Attempts+1, "err", herr)
-				msg := truncate(herr.Error(), 2000)
-				if err := q.MarkFailed(ctx, outboxdb.MarkFailedParams{
-					CreatedAt: row.CreatedAt, ID: row.ID, LastError: &msg, AvailableAt: time.Now().Add(Backoff(e.Attempts + 1)),
-				}); err != nil {
-					return fmt.Errorf("mark failed: %w", err)
-				}
-				continue
+	q := outboxdb.New(d.db.Primary)
+	rows, err := q.LeaseDueEvents(ctx, outboxdb.LeaseDueEventsParams{LeaseSeconds: int32(leaseFor.Seconds()), Batch: d.batch})
+	if err != nil {
+		return 0, fmt.Errorf("lease: %w", err)
+	}
+	for _, row := range rows {
+		e := Event{ID: row.ID, Topic: row.Topic, AggregateID: row.AggregateID, Payload: row.Payload, Attempts: row.Attempts}
+		if herr := d.handle(ctx, e); herr != nil {
+			slog.Warn("outbox event failed", "id", e.ID, "topic", e.Topic, "attempt", e.Attempts+1, "err", herr)
+			msg := truncate(herr.Error(), 2000)
+			if err := q.MarkFailed(ctx, outboxdb.MarkFailedParams{
+				CreatedAt: row.CreatedAt, ID: row.ID, LastError: &msg, AvailableAt: time.Now().Add(Backoff(e.Attempts + 1)),
+			}); err != nil {
+				return len(rows), fmt.Errorf("mark failed: %w", err)
 			}
-			if err := q.MarkProcessed(ctx, outboxdb.MarkProcessedParams{CreatedAt: row.CreatedAt, ID: row.ID}); err != nil {
-				return fmt.Errorf("mark processed: %w", err)
-			}
+			continue
 		}
-		return nil
-	})
-	return n, err
+		if err := q.MarkProcessed(ctx, outboxdb.MarkProcessedParams{CreatedAt: row.CreatedAt, ID: row.ID}); err != nil {
+			return len(rows), fmt.Errorf("mark processed: %w", err)
+		}
+	}
+	return len(rows), nil
 }
 
 func (d *Dispatcher) handle(ctx context.Context, e Event) (err error) {

@@ -23,6 +23,7 @@ const (
 	TopicCategoryChanged    = "category.changed"    // CategoryEvent: created, edited, moved or deleted
 	TopicTagChanged         = "tag.changed"         // TagEvent
 	TopicCommentsChanged    = "comments.changed"    // CommentsEvent: a thread's public view changed
+	TopicSearchReindex      = "search.reindex"      // {"after": id}: one chunk of a full rebuild
 )
 
 type CommentsEvent struct {
