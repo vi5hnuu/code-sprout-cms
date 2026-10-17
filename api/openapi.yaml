@@ -35,6 +35,8 @@ tags:
     description: The signed-in user's own profile and state.
   - name: content
     description: Public pages and listings (cacheable; identical for every reader).
+  - name: engagement
+    description: Likes, bookmarks, comments, shares and views.
   - name: taxonomy
     description: Category tree (site sections) and tags.
   - name: studio
@@ -730,6 +732,373 @@ paths:
                   redirect: { type: object, required: [slug], properties: { slug: { type: string } } }
         "404": { $ref: "#/components/responses/Problem" }
 
+  /v1/me/reactions/{contentId}:
+    parameters:
+      - { $ref: "#/components/parameters/ContentID" }
+    put:
+      tags: [engagement]
+      operationId: like
+      summary: Like an item (idempotent).
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Liked }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+    delete:
+      tags: [engagement]
+      operationId: unlike
+      summary: Remove a like (idempotent).
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Not liked }
+        "401": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+  /v1/me/bookmarks/{contentId}:
+    parameters:
+      - { $ref: "#/components/parameters/ContentID" }
+    put:
+      tags: [engagement]
+      operationId: bookmark
+      summary: Save an item, optionally into a list; saving again moves it.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                listId: { type: [integer, "null"], format: int64 }
+      responses:
+        "204": { description: Saved }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+    delete:
+      tags: [engagement]
+      operationId: unbookmark
+      summary: Remove a saved item (idempotent).
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Removed }
+        "401": { $ref: "#/components/responses/Problem" }
+  /v1/me/bookmarks:
+    get:
+      tags: [engagement]
+      operationId: listBookmarks
+      summary: Saved items, newest first, optionally one list.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: listId, in: query, schema: { type: integer, format: int64 } }
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200": { $ref: "#/components/responses/SavedPage" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+  /v1/me/likes:
+    get:
+      tags: [engagement]
+      operationId: listLikes
+      summary: Liked items, newest first.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200": { $ref: "#/components/responses/SavedPage" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+  /v1/me/bookmark-lists:
+    get:
+      tags: [engagement]
+      operationId: listBookmarkLists
+      summary: The caller's bookmark lists.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Lists
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/BookmarkList" } }
+        "401": { $ref: "#/components/responses/Problem" }
+    post:
+      tags: [engagement]
+      operationId: createBookmarkList
+      summary: Create a named list (at most 200).
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              additionalProperties: false
+              properties:
+                name: { type: string, maxLength: 60 }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BookmarkList" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /v1/me/bookmark-lists/{id}:
+    parameters:
+      - { $ref: "#/components/parameters/ID" }
+    delete:
+      tags: [engagement]
+      operationId: deleteBookmarkList
+      summary: Delete a list; its items stay saved in the default list.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Deleted }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /v1/me/state:
+    get:
+      tags: [engagement]
+      operationId: getItemState
+      summary: Whether the caller liked / saved each of up to 100 items.
+      description: Pages stay identical for every reader (and CDN-cacheable); client islands call this for the per-user bits.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: ids, in: query, required: true, description: Comma-separated content ids., schema: { type: string }, example: "12,40,77" }
+      responses:
+        "200":
+          description: State by id
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: object
+                    additionalProperties: { $ref: "#/components/schemas/ItemState" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+  /v1/me/comments/{contentId}:
+    parameters:
+      - { $ref: "#/components/parameters/ContentID" }
+    post:
+      tags: [engagement]
+      operationId: createComment
+      summary: Comment on a live item, or reply with parentId (full accounts only).
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              additionalProperties: false
+              properties:
+                parentId: { type: [integer, "null"], format: int64 }
+                body: { type: string, maxLength: 20000, description: "Markdown with code and links; no headings, images, embeds or HTML." }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Comment" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+  /v1/me/comments/{contentId}/{commentId}:
+    parameters:
+      - { $ref: "#/components/parameters/ContentID" }
+      - { $ref: "#/components/parameters/CommentID" }
+    put:
+      tags: [engagement]
+      operationId: editComment
+      summary: Edit your own comment.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              additionalProperties: false
+              properties:
+                body: { type: string, maxLength: 20000 }
+      responses:
+        "200":
+          description: Edited
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Comment" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+    delete:
+      tags: [engagement]
+      operationId: deleteComment
+      summary: Delete your own comment (moderators may delete any).
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Deleted }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /v1/me/comments/{contentId}/{commentId}/report:
+    parameters:
+      - { $ref: "#/components/parameters/ContentID" }
+      - { $ref: "#/components/parameters/CommentID" }
+    post:
+      tags: [engagement]
+      operationId: reportComment
+      summary: Report a comment; three distinct reports hide it pending moderation.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              additionalProperties: false
+              properties:
+                reason: { type: string, enum: [SPAM, ABUSE, OFF_TOPIC, OTHER] }
+                note: { type: [string, "null"], maxLength: 500 }
+      responses:
+        "204": { description: Reported }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /v1/public/threads/{contentId}:
+    parameters:
+      - { $ref: "#/components/parameters/ContentID" }
+    get:
+      tags: [engagement]
+      operationId: getThread
+      summary: Top-level comments of a live item, newest first.
+      security: []
+      parameters:
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200": { $ref: "#/components/responses/CommentPage" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /v1/public/threads/{contentId}/{rootId}/replies:
+    parameters:
+      - { $ref: "#/components/parameters/ContentID" }
+      - { name: rootId, in: path, required: true, schema: { type: integer, format: int64 } }
+    get:
+      tags: [engagement]
+      operationId: getReplies
+      summary: Replies in one thread, oldest first.
+      security: []
+      parameters:
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200": { $ref: "#/components/responses/CommentPage" }
+        "400": { $ref: "#/components/responses/Problem" }
+  /v1/public/events/view:
+    post:
+      tags: [engagement]
+      operationId: recordView
+      summary: Count a page view (deduplicated per viewer for 30 minutes; applied within ~30 s).
+      security: [{}, { bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [contentId]
+              additionalProperties: false
+              properties:
+                contentId: { type: integer, format: int64 }
+      responses:
+        "204": { description: Counted (or already counted) }
+        "400": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+  /v1/public/events/share:
+    post:
+      tags: [engagement]
+      operationId: recordShare
+      summary: Count a share (deduplicated per viewer and channel for an hour).
+      security: [{}, { bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [contentId, channel]
+              additionalProperties: false
+              properties:
+                contentId: { type: integer, format: int64 }
+                channel: { type: string, enum: [copy, x, linkedin, facebook, whatsapp, email, other] }
+      responses:
+        "204": { description: Counted }
+        "400": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+  /v1/admin/comment-reports:
+    get:
+      tags: [engagement]
+      operationId: listCommentReports
+      summary: Open comment reports, oldest first (site-wide EDITOR).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200":
+          description: Page of reports
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/CommentReport" } }
+                  nextCursor: { type: [string, "null"] }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+  /v1/admin/comments/{contentId}/{commentId}/moderate:
+    parameters:
+      - { $ref: "#/components/parameters/ContentID" }
+      - { $ref: "#/components/parameters/CommentID" }
+    post:
+      tags: [engagement]
+      operationId: moderateComment
+      summary: Hide, restore, delete, or dismiss reports; closes the comment's open reports.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              additionalProperties: false
+              properties:
+                action: { type: string, enum: [HIDE, RESTORE, DELETE, DISMISS] }
+      responses:
+        "204": { description: Done }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -739,6 +1108,16 @@ components:
       description: Access token from the shared auth service (audience `code-sprout-cms`).
 
   parameters:
+    ContentID:
+      name: contentId
+      in: path
+      required: true
+      schema: { type: integer, format: int64, minimum: 1 }
+    CommentID:
+      name: commentId
+      in: path
+      required: true
+      schema: { type: integer, format: int64, minimum: 1 }
     IfMatch:
       name: If-Match
       in: header
@@ -766,6 +1145,34 @@ components:
       schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
 
   responses:
+    SavedPage:
+      description: Page of saved items
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [items, nextCursor]
+            properties:
+              items:
+                type: array
+                items:
+                  type: object
+                  required: [savedAt, item]
+                  properties:
+                    savedAt: { type: string, format: date-time }
+                    listId: { type: [integer, "null"], format: int64 }
+                    item: { $ref: "#/components/schemas/ListItem" }
+              nextCursor: { type: [string, "null"] }
+    CommentPage:
+      description: Page of comments
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [items, nextCursor]
+            properties:
+              items: { type: array, items: { $ref: "#/components/schemas/Comment" } }
+              nextCursor: { type: [string, "null"] }
     Draft:
       description: The item's studio view
       headers:
@@ -1241,3 +1648,49 @@ components:
       properties:
         items: { type: array, items: { $ref: "#/components/schemas/ListItem" } }
         nextCursor: { type: [string, "null"] }
+
+    BookmarkList:
+      type: object
+      required: [id, name, createdAt]
+      properties:
+        id: { type: integer, format: int64 }
+        name: { type: string }
+        createdAt: { type: string, format: date-time }
+    ItemState:
+      type: object
+      required: [liked, bookmarked]
+      properties:
+        liked: { type: boolean }
+        bookmarked: { type: boolean }
+        bookmarkListId: { type: [integer, "null"], format: int64 }
+    Comment:
+      type: object
+      required: [id, contentId, rootId, parentId, author, body, deleted, replyCount, createdAt, editedAt]
+      properties:
+        id: { type: integer, format: int64 }
+        contentId: { type: integer, format: int64 }
+        rootId: { type: [integer, "null"], format: int64, description: The thread's top-level comment; null for top-level comments. }
+        parentId: { type: [integer, "null"], format: int64, description: The comment this one answers. }
+        author:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/PublicUser"
+        body: { type: string, description: Markdown; empty when deleted. }
+        deleted: { type: boolean }
+        replyCount: { type: integer }
+        createdAt: { type: string, format: date-time }
+        editedAt: { type: [string, "null"], format: date-time }
+    CommentReport:
+      type: object
+      required: [id, contentId, commentId, reporterId, reason, note, commentBody, commentAuthorId, commentStatus, createdAt]
+      properties:
+        id: { type: integer, format: int64 }
+        contentId: { type: integer, format: int64 }
+        commentId: { type: integer, format: int64 }
+        reporterId: { type: integer, format: int64 }
+        reason: { type: string }
+        note: { type: [string, "null"] }
+        commentBody: { type: string }
+        commentAuthorId: { type: integer, format: int64 }
+        commentStatus: { type: string }
+        createdAt: { type: string, format: date-time }

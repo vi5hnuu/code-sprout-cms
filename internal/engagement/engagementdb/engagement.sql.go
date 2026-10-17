@@ -7,7 +7,646 @@ package engagementdb
 
 import (
 	"context"
+	"time"
 )
+
+const addDailyStats = `-- name: AddDailyStats :exec
+INSERT INTO content_daily_stats (content_id, day, views, likes, comments, bookmarks, shares)
+VALUES ($1, current_date, $2, $3, $4, $5, $6)
+ON CONFLICT (content_id, day) DO UPDATE
+SET views = content_daily_stats.views + EXCLUDED.views, likes = content_daily_stats.likes + EXCLUDED.likes,
+    comments = content_daily_stats.comments + EXCLUDED.comments, bookmarks = content_daily_stats.bookmarks + EXCLUDED.bookmarks,
+    shares = content_daily_stats.shares + EXCLUDED.shares
+`
+
+type AddDailyStatsParams struct {
+	ContentID int64
+	Views     int64
+	Likes     int32
+	Comments  int32
+	Bookmarks int32
+	Shares    int32
+}
+
+// Daily rollups count events that happened that day (additions only).
+func (q *Queries) AddDailyStats(ctx context.Context, arg AddDailyStatsParams) error {
+	_, err := q.db.Exec(ctx, addDailyStats,
+		arg.ContentID,
+		arg.Views,
+		arg.Likes,
+		arg.Comments,
+		arg.Bookmarks,
+		arg.Shares,
+	)
+	return err
+}
+
+const applyStatDeltas = `-- name: ApplyStatDeltas :exec
+UPDATE content_stats
+SET views = views + $1, likes = likes + $2, comments = comments + $3,
+    bookmarks = bookmarks + $4, shares = shares + $5, updated_at = now()
+WHERE content_id = $6
+`
+
+type ApplyStatDeltasParams struct {
+	Views     int64
+	Likes     int64
+	Comments  int64
+	Bookmarks int64
+	Shares    int64
+	ContentID int64
+}
+
+// Counters move by deltas in the same transaction as the row that justifies them, so they
+// never need COUNT(*) on the read path.
+func (q *Queries) ApplyStatDeltas(ctx context.Context, arg ApplyStatDeltasParams) error {
+	_, err := q.db.Exec(ctx, applyStatDeltas,
+		arg.Views,
+		arg.Likes,
+		arg.Comments,
+		arg.Bookmarks,
+		arg.Shares,
+		arg.ContentID,
+	)
+	return err
+}
+
+const bookmarkStates = `-- name: BookmarkStates :many
+SELECT content_id, list_id FROM bookmark WHERE user_id = $1 AND content_id = ANY ($2::bigint[])
+`
+
+type BookmarkStatesParams struct {
+	UserID int64
+	Ids    []int64
+}
+
+type BookmarkStatesRow struct {
+	ContentID int64
+	ListID    *int64
+}
+
+func (q *Queries) BookmarkStates(ctx context.Context, arg BookmarkStatesParams) ([]BookmarkStatesRow, error) {
+	rows, err := q.db.Query(ctx, bookmarkStates, arg.UserID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []BookmarkStatesRow{}
+	for rows.Next() {
+		var i BookmarkStatesRow
+		if err := rows.Scan(&i.ContentID, &i.ListID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const bumpReplyCount = `-- name: BumpReplyCount :exec
+UPDATE comment SET reply_count = reply_count + $1 WHERE content_id = $2 AND id = $3
+`
+
+type BumpReplyCountParams struct {
+	Delta     int32
+	ContentID int64
+	ID        int64
+}
+
+func (q *Queries) BumpReplyCount(ctx context.Context, arg BumpReplyCountParams) error {
+	_, err := q.db.Exec(ctx, bumpReplyCount, arg.Delta, arg.ContentID, arg.ID)
+	return err
+}
+
+const clearBookmarkList = `-- name: ClearBookmarkList :exec
+UPDATE bookmark SET list_id = NULL WHERE user_id = $1 AND list_id = $2
+`
+
+type ClearBookmarkListParams struct {
+	UserID int64
+	ListID *int64
+}
+
+func (q *Queries) ClearBookmarkList(ctx context.Context, arg ClearBookmarkListParams) error {
+	_, err := q.db.Exec(ctx, clearBookmarkList, arg.UserID, arg.ListID)
+	return err
+}
+
+const countOpenReports = `-- name: CountOpenReports :one
+SELECT count(*) FROM comment_report WHERE comment_id = $1 AND resolved_at IS NULL
+`
+
+func (q *Queries) CountOpenReports(ctx context.Context, commentID int64) (int64, error) {
+	row := q.db.QueryRow(ctx, countOpenReports, commentID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countUserBookmarks = `-- name: CountUserBookmarks :one
+SELECT count(*) FROM bookmark WHERE user_id = $1
+`
+
+func (q *Queries) CountUserBookmarks(ctx context.Context, userID int64) (int64, error) {
+	row := q.db.QueryRow(ctx, countUserBookmarks, userID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const deleteBookmark = `-- name: DeleteBookmark :execrows
+DELETE FROM bookmark WHERE user_id = $1 AND content_id = $2
+`
+
+type DeleteBookmarkParams struct {
+	UserID    int64
+	ContentID int64
+}
+
+func (q *Queries) DeleteBookmark(ctx context.Context, arg DeleteBookmarkParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteBookmark, arg.UserID, arg.ContentID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteBookmarkList = `-- name: DeleteBookmarkList :execrows
+DELETE FROM bookmark_list WHERE id = $1 AND user_id = $2
+`
+
+type DeleteBookmarkListParams struct {
+	ID     int64
+	UserID int64
+}
+
+func (q *Queries) DeleteBookmarkList(ctx context.Context, arg DeleteBookmarkListParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteBookmarkList, arg.ID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteReaction = `-- name: DeleteReaction :execrows
+DELETE FROM reaction WHERE content_id = $1 AND user_id = $2
+`
+
+type DeleteReactionParams struct {
+	ContentID int64
+	UserID    int64
+}
+
+func (q *Queries) DeleteReaction(ctx context.Context, arg DeleteReactionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteReaction, arg.ContentID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const editComment = `-- name: EditComment :one
+UPDATE comment SET body_md = $3, edited_at = now() WHERE content_id = $1 AND id = $2 RETURNING id, content_id, root_id, parent_id, author_id, body_md, status, score, reply_count, created_at, edited_at
+`
+
+type EditCommentParams struct {
+	ContentID int64
+	ID        int64
+	BodyMd    string
+}
+
+func (q *Queries) EditComment(ctx context.Context, arg EditCommentParams) (Comment, error) {
+	row := q.db.QueryRow(ctx, editComment, arg.ContentID, arg.ID, arg.BodyMd)
+	var i Comment
+	err := row.Scan(
+		&i.ID,
+		&i.ContentID,
+		&i.RootID,
+		&i.ParentID,
+		&i.AuthorID,
+		&i.BodyMd,
+		&i.Status,
+		&i.Score,
+		&i.ReplyCount,
+		&i.CreatedAt,
+		&i.EditedAt,
+	)
+	return i, err
+}
+
+const getBookmarkList = `-- name: GetBookmarkList :one
+SELECT id, user_id, name, created_at FROM bookmark_list WHERE id = $1 AND user_id = $2
+`
+
+type GetBookmarkListParams struct {
+	ID     int64
+	UserID int64
+}
+
+func (q *Queries) GetBookmarkList(ctx context.Context, arg GetBookmarkListParams) (BookmarkList, error) {
+	row := q.db.QueryRow(ctx, getBookmarkList, arg.ID, arg.UserID)
+	var i BookmarkList
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Name,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getComment = `-- name: GetComment :one
+SELECT id, content_id, root_id, parent_id, author_id, body_md, status, score, reply_count, created_at, edited_at FROM comment WHERE content_id = $1 AND id = $2
+`
+
+type GetCommentParams struct {
+	ContentID int64
+	ID        int64
+}
+
+func (q *Queries) GetComment(ctx context.Context, arg GetCommentParams) (Comment, error) {
+	row := q.db.QueryRow(ctx, getComment, arg.ContentID, arg.ID)
+	var i Comment
+	err := row.Scan(
+		&i.ID,
+		&i.ContentID,
+		&i.RootID,
+		&i.ParentID,
+		&i.AuthorID,
+		&i.BodyMd,
+		&i.Status,
+		&i.Score,
+		&i.ReplyCount,
+		&i.CreatedAt,
+		&i.EditedAt,
+	)
+	return i, err
+}
+
+const getCommentForUpdate = `-- name: GetCommentForUpdate :one
+SELECT id, content_id, root_id, parent_id, author_id, body_md, status, score, reply_count, created_at, edited_at FROM comment WHERE content_id = $1 AND id = $2 FOR UPDATE
+`
+
+type GetCommentForUpdateParams struct {
+	ContentID int64
+	ID        int64
+}
+
+func (q *Queries) GetCommentForUpdate(ctx context.Context, arg GetCommentForUpdateParams) (Comment, error) {
+	row := q.db.QueryRow(ctx, getCommentForUpdate, arg.ContentID, arg.ID)
+	var i Comment
+	err := row.Scan(
+		&i.ID,
+		&i.ContentID,
+		&i.RootID,
+		&i.ParentID,
+		&i.AuthorID,
+		&i.BodyMd,
+		&i.Status,
+		&i.Score,
+		&i.ReplyCount,
+		&i.CreatedAt,
+		&i.EditedAt,
+	)
+	return i, err
+}
+
+const insertBookmark = `-- name: InsertBookmark :execrows
+
+INSERT INTO bookmark (user_id, content_id, list_id) VALUES ($1, $2, $3)
+ON CONFLICT (user_id, content_id) DO NOTHING
+`
+
+type InsertBookmarkParams struct {
+	UserID    int64
+	ContentID int64
+	ListID    *int64
+}
+
+// ── Bookmarks ───────────────────────────────────────────────────────────────
+// 1 when newly bookmarked (counters move), 0 when it already was (then MoveBookmark).
+func (q *Queries) InsertBookmark(ctx context.Context, arg InsertBookmarkParams) (int64, error) {
+	result, err := q.db.Exec(ctx, insertBookmark, arg.UserID, arg.ContentID, arg.ListID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const insertBookmarkList = `-- name: InsertBookmarkList :one
+INSERT INTO bookmark_list (user_id, name) VALUES ($1, $2) RETURNING id, user_id, name, created_at
+`
+
+type InsertBookmarkListParams struct {
+	UserID int64
+	Name   string
+}
+
+func (q *Queries) InsertBookmarkList(ctx context.Context, arg InsertBookmarkListParams) (BookmarkList, error) {
+	row := q.db.QueryRow(ctx, insertBookmarkList, arg.UserID, arg.Name)
+	var i BookmarkList
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Name,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const insertComment = `-- name: InsertComment :one
+
+INSERT INTO comment (content_id, root_id, parent_id, author_id, body_md)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, content_id, root_id, parent_id, author_id, body_md, status, score, reply_count, created_at, edited_at
+`
+
+type InsertCommentParams struct {
+	ContentID int64
+	RootID    *int64
+	ParentID  *int64
+	AuthorID  int64
+	BodyMd    string
+}
+
+// ── Comments ────────────────────────────────────────────────────────────────
+func (q *Queries) InsertComment(ctx context.Context, arg InsertCommentParams) (Comment, error) {
+	row := q.db.QueryRow(ctx, insertComment,
+		arg.ContentID,
+		arg.RootID,
+		arg.ParentID,
+		arg.AuthorID,
+		arg.BodyMd,
+	)
+	var i Comment
+	err := row.Scan(
+		&i.ID,
+		&i.ContentID,
+		&i.RootID,
+		&i.ParentID,
+		&i.AuthorID,
+		&i.BodyMd,
+		&i.Status,
+		&i.Score,
+		&i.ReplyCount,
+		&i.CreatedAt,
+		&i.EditedAt,
+	)
+	return i, err
+}
+
+const insertCommentReport = `-- name: InsertCommentReport :execrows
+INSERT INTO comment_report (content_id, comment_id, reporter_id, reason, note)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (comment_id, reporter_id) DO NOTHING
+`
+
+type InsertCommentReportParams struct {
+	ContentID  int64
+	CommentID  int64
+	ReporterID int64
+	Reason     string
+	Note       *string
+}
+
+func (q *Queries) InsertCommentReport(ctx context.Context, arg InsertCommentReportParams) (int64, error) {
+	result, err := q.db.Exec(ctx, insertCommentReport,
+		arg.ContentID,
+		arg.CommentID,
+		arg.ReporterID,
+		arg.Reason,
+		arg.Note,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const insertReaction = `-- name: InsertReaction :execrows
+
+INSERT INTO reaction (content_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING
+`
+
+type InsertReactionParams struct {
+	ContentID int64
+	UserID    int64
+}
+
+// ── Reactions ───────────────────────────────────────────────────────────────
+func (q *Queries) InsertReaction(ctx context.Context, arg InsertReactionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, insertReaction, arg.ContentID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const listBookmarkLists = `-- name: ListBookmarkLists :many
+SELECT id, user_id, name, created_at FROM bookmark_list WHERE user_id = $1 ORDER BY name LIMIT 200
+`
+
+func (q *Queries) ListBookmarkLists(ctx context.Context, userID int64) ([]BookmarkList, error) {
+	rows, err := q.db.Query(ctx, listBookmarkLists, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []BookmarkList{}
+	for rows.Next() {
+		var i BookmarkList
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Name,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOpenReports = `-- name: ListOpenReports :many
+SELECT r.id, r.content_id, r.comment_id, r.reporter_id, r.reason, r.note, r.created_at, r.resolved_at, r.resolved_by, c.body_md, c.author_id, c.status AS comment_status
+FROM comment_report r
+JOIN comment c ON c.content_id = r.content_id AND c.id = r.comment_id
+WHERE r.resolved_at IS NULL
+  AND ($1::timestamptz IS NULL
+       OR (r.created_at, r.id) > ($1::timestamptz, $2::bigint))
+ORDER BY r.created_at, r.id
+LIMIT $3
+`
+
+type ListOpenReportsParams struct {
+	AfterCreated *time.Time
+	AfterID      *int64
+	RowLimit     int32
+}
+
+type ListOpenReportsRow struct {
+	ID            int64
+	ContentID     int64
+	CommentID     int64
+	ReporterID    int64
+	Reason        string
+	Note          *string
+	CreatedAt     time.Time
+	ResolvedAt    *time.Time
+	ResolvedBy    *int64
+	BodyMd        string
+	AuthorID      int64
+	CommentStatus string
+}
+
+func (q *Queries) ListOpenReports(ctx context.Context, arg ListOpenReportsParams) ([]ListOpenReportsRow, error) {
+	rows, err := q.db.Query(ctx, listOpenReports, arg.AfterCreated, arg.AfterID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListOpenReportsRow{}
+	for rows.Next() {
+		var i ListOpenReportsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ContentID,
+			&i.CommentID,
+			&i.ReporterID,
+			&i.Reason,
+			&i.Note,
+			&i.CreatedAt,
+			&i.ResolvedAt,
+			&i.ResolvedBy,
+			&i.BodyMd,
+			&i.AuthorID,
+			&i.CommentStatus,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listReplies = `-- name: ListReplies :many
+SELECT id, content_id, root_id, parent_id, author_id, body_md, status, score, reply_count, created_at, edited_at FROM comment
+WHERE content_id = $1 AND root_id = $2 AND status = 'VISIBLE'
+  AND ($3::timestamptz IS NULL
+       OR (created_at, id) > ($3::timestamptz, $4::bigint))
+ORDER BY created_at, id
+LIMIT $5
+`
+
+type ListRepliesParams struct {
+	ContentID    int64
+	RootID       *int64
+	AfterCreated *time.Time
+	AfterID      *int64
+	RowLimit     int32
+}
+
+func (q *Queries) ListReplies(ctx context.Context, arg ListRepliesParams) ([]Comment, error) {
+	rows, err := q.db.Query(ctx, listReplies,
+		arg.ContentID,
+		arg.RootID,
+		arg.AfterCreated,
+		arg.AfterID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Comment{}
+	for rows.Next() {
+		var i Comment
+		if err := rows.Scan(
+			&i.ID,
+			&i.ContentID,
+			&i.RootID,
+			&i.ParentID,
+			&i.AuthorID,
+			&i.BodyMd,
+			&i.Status,
+			&i.Score,
+			&i.ReplyCount,
+			&i.CreatedAt,
+			&i.EditedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRootComments = `-- name: ListRootComments :many
+SELECT id, content_id, root_id, parent_id, author_id, body_md, status, score, reply_count, created_at, edited_at FROM comment
+WHERE content_id = $1 AND root_id IS NULL
+  AND (status = 'VISIBLE' OR (status = 'DELETED' AND reply_count > 0))
+  AND ($2::timestamptz IS NULL
+       OR (created_at, id) < ($2::timestamptz, $3::bigint))
+ORDER BY created_at DESC, id DESC
+LIMIT $4
+`
+
+type ListRootCommentsParams struct {
+	ContentID    int64
+	AfterCreated *time.Time
+	AfterID      *int64
+	RowLimit     int32
+}
+
+// Deleted roots stay (as "[deleted]") while they have visible replies, so threads keep context.
+func (q *Queries) ListRootComments(ctx context.Context, arg ListRootCommentsParams) ([]Comment, error) {
+	rows, err := q.db.Query(ctx, listRootComments,
+		arg.ContentID,
+		arg.AfterCreated,
+		arg.AfterID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Comment{}
+	for rows.Next() {
+		var i Comment
+		if err := rows.Scan(
+			&i.ID,
+			&i.ContentID,
+			&i.RootID,
+			&i.ParentID,
+			&i.AuthorID,
+			&i.BodyMd,
+			&i.Status,
+			&i.Score,
+			&i.ReplyCount,
+			&i.CreatedAt,
+			&i.EditedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
 
 const listStats = `-- name: ListStats :many
 SELECT content_id, views, likes, comments, bookmarks, shares, updated_at FROM content_stats WHERE content_id = ANY ($1::bigint[])
@@ -39,4 +678,174 @@ func (q *Queries) ListStats(ctx context.Context, ids []int64) ([]ContentStat, er
 		return nil, err
 	}
 	return items, nil
+}
+
+const listUserBookmarks = `-- name: ListUserBookmarks :many
+SELECT content_id, list_id, created_at FROM bookmark
+WHERE user_id = $1
+  AND ($2::bigint IS NULL OR list_id = $2::bigint)
+  AND ($3::timestamptz IS NULL
+       OR (created_at, content_id) < ($3::timestamptz, $4::bigint))
+ORDER BY created_at DESC, content_id DESC
+LIMIT $5
+`
+
+type ListUserBookmarksParams struct {
+	UserID       int64
+	ListID       *int64
+	AfterCreated *time.Time
+	AfterID      *int64
+	RowLimit     int32
+}
+
+type ListUserBookmarksRow struct {
+	ContentID int64
+	ListID    *int64
+	CreatedAt time.Time
+}
+
+func (q *Queries) ListUserBookmarks(ctx context.Context, arg ListUserBookmarksParams) ([]ListUserBookmarksRow, error) {
+	rows, err := q.db.Query(ctx, listUserBookmarks,
+		arg.UserID,
+		arg.ListID,
+		arg.AfterCreated,
+		arg.AfterID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUserBookmarksRow{}
+	for rows.Next() {
+		var i ListUserBookmarksRow
+		if err := rows.Scan(&i.ContentID, &i.ListID, &i.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUserReactions = `-- name: ListUserReactions :many
+SELECT content_id, created_at FROM reaction
+WHERE user_id = $1
+  AND ($2::timestamptz IS NULL
+       OR (created_at, content_id) < ($2::timestamptz, $3::bigint))
+ORDER BY created_at DESC, content_id DESC
+LIMIT $4
+`
+
+type ListUserReactionsParams struct {
+	UserID       int64
+	AfterCreated *time.Time
+	AfterID      *int64
+	RowLimit     int32
+}
+
+type ListUserReactionsRow struct {
+	ContentID int64
+	CreatedAt time.Time
+}
+
+func (q *Queries) ListUserReactions(ctx context.Context, arg ListUserReactionsParams) ([]ListUserReactionsRow, error) {
+	rows, err := q.db.Query(ctx, listUserReactions,
+		arg.UserID,
+		arg.AfterCreated,
+		arg.AfterID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUserReactionsRow{}
+	for rows.Next() {
+		var i ListUserReactionsRow
+		if err := rows.Scan(&i.ContentID, &i.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const moveBookmark = `-- name: MoveBookmark :exec
+UPDATE bookmark SET list_id = $1 WHERE user_id = $2 AND content_id = $3
+`
+
+type MoveBookmarkParams struct {
+	ListID    *int64
+	UserID    int64
+	ContentID int64
+}
+
+func (q *Queries) MoveBookmark(ctx context.Context, arg MoveBookmarkParams) error {
+	_, err := q.db.Exec(ctx, moveBookmark, arg.ListID, arg.UserID, arg.ContentID)
+	return err
+}
+
+const reactedIDs = `-- name: ReactedIDs :many
+SELECT content_id FROM reaction WHERE user_id = $1 AND content_id = ANY ($2::bigint[])
+`
+
+type ReactedIDsParams struct {
+	UserID int64
+	Ids    []int64
+}
+
+func (q *Queries) ReactedIDs(ctx context.Context, arg ReactedIDsParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, reactedIDs, arg.UserID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var content_id int64
+		if err := rows.Scan(&content_id); err != nil {
+			return nil, err
+		}
+		items = append(items, content_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const resolveReports = `-- name: ResolveReports :exec
+UPDATE comment_report SET resolved_at = now(), resolved_by = $1
+WHERE comment_id = $2 AND resolved_at IS NULL
+`
+
+type ResolveReportsParams struct {
+	Resolver  *int64
+	CommentID int64
+}
+
+func (q *Queries) ResolveReports(ctx context.Context, arg ResolveReportsParams) error {
+	_, err := q.db.Exec(ctx, resolveReports, arg.Resolver, arg.CommentID)
+	return err
+}
+
+const setCommentStatus = `-- name: SetCommentStatus :exec
+UPDATE comment SET status = $3 WHERE content_id = $1 AND id = $2
+`
+
+type SetCommentStatusParams struct {
+	ContentID int64
+	ID        int64
+	Status    string
+}
+
+func (q *Queries) SetCommentStatus(ctx context.Context, arg SetCommentStatusParams) error {
+	_, err := q.db.Exec(ctx, setCommentStatus, arg.ContentID, arg.ID, arg.Status)
+	return err
 }

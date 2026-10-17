@@ -8,6 +8,27 @@ import (
 	"time"
 )
 
+type BookmarkList struct {
+	ID        int64
+	UserID    int64
+	Name      string
+	CreatedAt time.Time
+}
+
+type Comment struct {
+	ID         int64
+	ContentID  int64
+	RootID     *int64
+	ParentID   *int64
+	AuthorID   int64
+	BodyMd     string
+	Status     string
+	Score      int32
+	ReplyCount int32
+	CreatedAt  time.Time
+	EditedAt   *time.Time
+}
+
 type ContentStat struct {
 	ContentID int64
 	Views     int64

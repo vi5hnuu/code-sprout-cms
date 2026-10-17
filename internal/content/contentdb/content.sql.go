@@ -703,6 +703,55 @@ func (q *Queries) ListLiveByCategory(ctx context.Context, arg ListLiveByCategory
 	return items, nil
 }
 
+const listLiveByIDs = `-- name: ListLiveByIDs :many
+SELECT id, type, locale, slug, title, summary, status, review_state, visibility, access, author_id, primary_category_id, last_rev_no, draft_rev_no, published_rev_no, scheduled_at, published_at, last_published_at, translation_group_id, created_at, updated_at, deleted_at FROM content
+WHERE id = ANY ($1::bigint[]) AND status = 'PUBLISHED' AND visibility <> 'PRIVATE' AND deleted_at IS NULL
+`
+
+// Live items among ids (UNLISTED included: readers can like a page they reached by URL).
+func (q *Queries) ListLiveByIDs(ctx context.Context, ids []int64) ([]Content, error) {
+	rows, err := q.db.Query(ctx, listLiveByIDs, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Content{}
+	for rows.Next() {
+		var i Content
+		if err := rows.Scan(
+			&i.ID,
+			&i.Type,
+			&i.Locale,
+			&i.Slug,
+			&i.Title,
+			&i.Summary,
+			&i.Status,
+			&i.ReviewState,
+			&i.Visibility,
+			&i.Access,
+			&i.AuthorID,
+			&i.PrimaryCategoryID,
+			&i.LastRevNo,
+			&i.DraftRevNo,
+			&i.PublishedRevNo,
+			&i.ScheduledAt,
+			&i.PublishedAt,
+			&i.LastPublishedAt,
+			&i.TranslationGroupID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listLiveByTag = `-- name: ListLiveByTag :many
 SELECT c.id, c.type, c.locale, c.slug, c.title, c.summary, c.status, c.review_state, c.visibility, c.access, c.author_id, c.primary_category_id, c.last_rev_no, c.draft_rev_no, c.published_rev_no, c.scheduled_at, c.published_at, c.last_published_at, c.translation_group_id, c.created_at, c.updated_at, c.deleted_at FROM content_tag ct
 JOIN content c ON c.id = ct.content_id

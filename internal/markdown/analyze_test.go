@@ -139,3 +139,17 @@ func BenchmarkAnalyzeLargeArticle(b *testing.B) {
 		Analyze(body.Bytes())
 	}
 }
+
+func TestCommentProfile(t *testing.T) {
+	ok := AnalyzeComment([]byte("Nice! Try `lo + (hi-lo)/2`:\n\n```go\nmid := lo + (hi-lo)/2\n```\n\nSee [this](https://example.com)."))
+	if !ok.Valid() {
+		t.Fatalf("plain comment rejected: %+v", ok.Issues)
+	}
+	bad := AnalyzeComment([]byte("## Title\n\n![x](asset:1)\n\n::problem{slug=two-sum}\n\n<b>x</b>\n"))
+	got := strings.Join(issueCodes(bad), ",")
+	for _, want := range []string{"comment.heading", "comment.image", "comment.directive", "html.not_allowed"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %s in %s", want, got)
+		}
+	}
+}

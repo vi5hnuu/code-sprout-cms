@@ -268,3 +268,8 @@ SELECT * FROM article_ext WHERE content_id = $1;
 
 -- name: GetBlogExt :one
 SELECT * FROM blog_ext WHERE content_id = $1;
+
+-- Live items among ids (UNLISTED included: readers can like a page they reached by URL).
+-- name: ListLiveByIDs :many
+SELECT * FROM content
+WHERE id = ANY (sqlc.arg(ids)::bigint[]) AND status = 'PUBLISHED' AND visibility <> 'PRIVATE' AND deleted_at IS NULL;

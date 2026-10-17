@@ -14,7 +14,7 @@ import (
 
 func (f *fixture) reader() *Reader {
 	assets := asset.NewService(f.d, nil, asset.Config{PublicBucket: "sprout-public", PublicBaseURL: "https://cdn.test"})
-	return NewReader(f.d, assets, f.tax, user.NewService(f.d.Primary, f.d.Replica, assets), engagement.NewService(f.d))
+	return NewReader(f.d, assets, f.tax, user.NewService(f.d.Primary, f.d.Replica, assets), engagement.NewStatsReader(f.d))
 }
 
 // publish creates and publishes an item through the real workflow.
@@ -163,8 +163,10 @@ func TestListingsPaginateAndExcludeArchived(t *testing.T) {
 		if err != nil || !containsItem(res.Items, published[4].ID) || containsItem(res.Items, published[2].ID) {
 			t.Fatalf("filter %+v: %v, %v", filter, ids(res.Items), err)
 		}
-		if res.Items[0].Author.ID == 0 || res.Items[0].ReadingMinutes == 0 {
-			t.Fatalf("list item not hydrated: %+v", res.Items[0])
+		for _, it := range res.Items {
+			if it.ID == published[4].ID && (it.Author.ID != f.author.UserID || it.ReadingMinutes == 0 || it.Category == nil) {
+				t.Fatalf("list item not hydrated: %+v", it)
+			}
 		}
 	}
 

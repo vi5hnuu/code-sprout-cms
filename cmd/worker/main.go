@@ -12,15 +12,19 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
 	"code-sprout-cms/internal/access"
 	"code-sprout-cms/internal/asset"
 	"code-sprout-cms/internal/content"
+	"code-sprout-cms/internal/engagement"
 	"code-sprout-cms/internal/maintenance"
 	"code-sprout-cms/internal/outbox"
 	"code-sprout-cms/internal/platform/config"
 	"code-sprout-cms/internal/platform/db"
 	"code-sprout-cms/internal/platform/storage"
 	"code-sprout-cms/internal/taxonomy"
+	"code-sprout-cms/internal/user"
 )
 
 func main() {
@@ -49,14 +53,24 @@ func run() error {
 	// Handlers are registered here as their domains land (search, sitemap, revalidation).
 	dispatcher := outbox.NewDispatcher(database)
 	assets := asset.NewService(database, storage.FromConfig(cfg.Storage), asset.ConfigFrom(cfg.Storage))
+	rdb := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr, Password: cfg.RedisPassword})
+	defer rdb.Close()
+	if err := rdb.Ping(ctx).Err(); err != nil {
+		return err
+	}
 	policy := access.NewPolicy(database.Primary)
-	contents := content.NewService(database, policy, assets, taxonomy.NewService(database, policy))
+	taxonomies := taxonomy.NewService(database, policy)
+	contents := content.NewService(database, policy, assets, taxonomies)
+	users := user.NewService(database.Primary, database.Replica, assets)
+	reader := content.NewReader(database, assets, taxonomies, users, engagement.NewStatsReader(database))
+	engagements := engagement.NewService(database, rdb, reader, users, policy)
 
 	var wg sync.WaitGroup
 	wg.Go(func() { dispatcher.Run(ctx) })
 	wg.Go(func() { maintenance.KeepPartitionsAhead(ctx, database.Primary) })
 	wg.Go(func() { assets.RunVerifier(ctx, 5*time.Second) })
 	wg.Go(func() { contents.RunScheduler(ctx, 30*time.Second) })
+	wg.Go(func() { engagements.RunCounterFlusher(ctx, 30*time.Second) })
 
 	slog.Info("worker started")
 	wg.Wait()

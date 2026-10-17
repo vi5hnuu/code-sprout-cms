@@ -68,15 +68,35 @@ func (a *Analysis) Valid() bool { return len(a.Issues) == 0 }
 
 var md = goldmark.New(goldmark.WithExtensions(extension.GFM, directiveExtension{}))
 
-// Analyze parses body and reports issues plus derived data. It is safe for concurrent use.
-func Analyze(body []byte) *Analysis {
+// profile selects which constructs a body may use.
+type profile struct {
+	maxBytes   int
+	restricted bool // comments: no directives, images or headings
+}
+
+var (
+	contentProfile = profile{maxBytes: MaxBodyBytes}
+	commentProfile = profile{maxBytes: MaxCommentBytes, restricted: true}
+)
+
+// MaxCommentBytes bounds a comment (the database enforces the same limit).
+const MaxCommentBytes = 20000
+
+// Analyze parses a content body and reports issues plus derived data. Safe for concurrent use.
+func Analyze(body []byte) *Analysis { return analyze(body, contentProfile) }
+
+// AnalyzeComment checks a reader comment: plain Markdown with code and links, but no
+// directives, images or headings, so comments cannot impersonate article content.
+func AnalyzeComment(body []byte) *Analysis { return analyze(body, commentProfile) }
+
+func analyze(body []byte, prof profile) *Analysis {
 	a := &Analysis{Issues: []Issue{}, TOC: []Heading{}, Snippets: []Snippet{}, AssetIDs: []int64{}, ProblemSlugs: []string{}}
-	if len(body) > MaxBodyBytes {
+	if len(body) > prof.maxBytes {
 		a.Issues = append(a.Issues, Issue{Line: 1, Code: "body.too_large",
-			Message: fmt.Sprintf("Body is %d bytes; the limit is %d.", len(body), MaxBodyBytes)})
+			Message: fmt.Sprintf("Body is %d bytes; the limit is %d.", len(body), prof.maxBytes)})
 		return a
 	}
-	w := walker{a: a, src: body, lines: lineStarts(body), slugger: NewSlugger(), assets: map[int64]bool{}}
+	w := walker{a: a, src: body, lines: lineStarts(body), slugger: NewSlugger(), assets: map[int64]bool{}, prof: prof}
 	doc := md.Parser().Parse(text.NewReader(body))
 	_ = ast.Walk(doc, w.visit)
 
@@ -97,6 +117,7 @@ func Analyze(body []byte) *Analysis {
 }
 
 type walker struct {
+	prof    profile
 	a       *Analysis
 	src     []byte
 	lines   []int
@@ -121,6 +142,10 @@ func (w *walker) visit(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		w.issue(n, "html.not_allowed", "Raw HTML is not allowed; use Markdown or a directive.")
 		return ast.WalkSkipChildren, nil
 	case *ast.Heading:
+		if w.prof.restricted {
+			w.issue(n, "comment.heading", "Headings are not available in comments.")
+			return ast.WalkSkipChildren, nil
+		}
 		w.heading(n)
 	case *ast.FencedCodeBlock:
 		w.fence(n)
@@ -129,6 +154,10 @@ func (w *walker) visit(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		w.issue(n, "code.indented", "Use a fenced code block (```lang) so the language is known.")
 		return ast.WalkSkipChildren, nil
 	case *ast.Image:
+		if w.prof.restricted {
+			w.issue(n, "comment.image", "Images are not available in comments.")
+			return ast.WalkSkipChildren, nil
+		}
 		w.image(n)
 		return ast.WalkSkipChildren, nil
 	case *ast.Link:
@@ -136,6 +165,10 @@ func (w *walker) visit(n ast.Node, entering bool) (ast.WalkStatus, error) {
 	case *ast.AutoLink:
 		w.checkURL(n, string(n.URL(w.src)))
 	case *Directive:
+		if w.prof.restricted {
+			w.issue(n, "comment.directive", "Embeds are not available in comments.")
+			return ast.WalkSkipChildren, nil
+		}
 		w.directive(n)
 	case *ast.Text:
 		w.plain.Write(n.Segment.Value(w.src))
@@ -165,7 +198,8 @@ func (w *walker) fence(f *ast.FencedCodeBlock) {
 		w.issue(f, "code.bad_info", "Code block options: %s.", err)
 		return
 	}
-	for key, val := range attrs {
+	for _, key := range sortedKeys(attrs) {
+		val := attrs[key]
 		spec, ok := fenceAttrs[key]
 		if !ok {
 			w.issue(f, "code.unknown_option", "Unknown code block option %q.", key)
@@ -240,7 +274,8 @@ func (w *walker) directive(d *Directive) {
 	if spec.labelRequired && d.Label == "" {
 		w.issue(d, "directive.no_label", "%s needs a [label], e.g. :::%s[Show answer].", d.Name, d.Name)
 	}
-	for key, val := range d.Attrs {
+	for _, key := range sortedKeys(d.Attrs) {
+		val := d.Attrs[key]
 		as, ok := spec.attrs[key]
 		if !ok {
 			w.issue(d, "directive.unknown_attribute", "%s does not accept %q.", d.Name, key)
@@ -252,8 +287,8 @@ func (w *walker) directive(d *Directive) {
 			}
 		}
 	}
-	for key, as := range spec.attrs {
-		if _, present := d.Attrs[key]; as.required && !present {
+	for _, key := range sortedKeys(spec.attrs) {
+		if _, present := d.Attrs[key]; spec.attrs[key].required && !present {
 			w.issue(d, "directive.missing_attribute", "%s requires %s=.", d.Name, key)
 		}
 	}
@@ -389,11 +424,15 @@ func firstOffset(n ast.Node) (int, bool) {
 	return 0, false
 }
 
-func joinKeys[V any](m map[string]V) string {
+// sortedKeys gives map iteration a fixed order. Output must be deterministic: the fixtures are
+// a conformance spec, and authors should see issues in a stable order.
+func sortedKeys[V any](m map[string]V) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
 	}
 	slices.Sort(keys)
-	return strings.Join(keys, ", ")
+	return keys
 }
+
+func joinKeys[V any](m map[string]V) string { return strings.Join(sortedKeys(m), ", ") }

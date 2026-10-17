@@ -350,3 +350,48 @@ func (r *Reader) hydrateList(ctx context.Context, q *contentdb.Queries, rows []c
 	}
 	return items, nil
 }
+
+// LiveIDs returns which of ids are live and visible, for domains that only act on live
+// content (likes, bookmarks, comments, view counts).
+func (r *Reader) LiveIDs(ctx context.Context, ids []int64) ([]int64, error) {
+	if len(ids) == 0 {
+		return []int64{}, nil
+	}
+	rows, err := contentdb.New(r.db.Replica).ListLiveByIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]int64, len(rows))
+	for i, c := range rows {
+		out[i] = c.ID
+	}
+	return out, nil
+}
+
+// ItemsByID hydrates live items in the order of ids, skipping any no longer live (a bookmark
+// can outlive the page it points to).
+func (r *Reader) ItemsByID(ctx context.Context, ids []int64) ([]ListItem, error) {
+	if len(ids) == 0 {
+		return []ListItem{}, nil
+	}
+	q := contentdb.New(r.db.Replica)
+	rows, err := q.ListLiveByIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	items, err := r.hydrateList(ctx, q, rows)
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[int64]ListItem, len(items))
+	for _, it := range items {
+		byID[it.ID] = it
+	}
+	ordered := make([]ListItem, 0, len(items))
+	for _, id := range ids {
+		if it, ok := byID[id]; ok {
+			ordered = append(ordered, it)
+		}
+	}
+	return ordered, nil
+}

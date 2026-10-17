@@ -22,7 +22,12 @@ const (
 	TopicContentUpdated     = "content.updated"     // ContentEvent: live content re-published
 	TopicCategoryChanged    = "category.changed"    // CategoryEvent: created, edited, moved or deleted
 	TopicTagChanged         = "tag.changed"         // TagEvent
+	TopicCommentsChanged    = "comments.changed"    // CommentsEvent: a thread's public view changed
 )
+
+type CommentsEvent struct {
+	ContentID int64 `json:"contentId"`
+}
 
 // CategoryEvent carries the affected paths: a move invalidates pages under both the old and
 // the new location.
