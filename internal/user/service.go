@@ -33,16 +33,20 @@ type Profile struct {
 }
 
 type Service struct {
-	q *userdb.Queries
+	q       *userdb.Queries
+	replica *pgxpool.Pool
+	files   Files
 	// auth sub → app_user.id. Mappings never change once created, so caching is safe; the
 	// bound keeps memory flat however many distinct users we see.
 	ids *expirable.LRU[string, int64]
 }
 
-func NewService(primary *pgxpool.Pool) *Service {
+func NewService(primary, replica *pgxpool.Pool, files Files) *Service {
 	return &Service{
-		q:   userdb.New(primary),
-		ids: expirable.NewLRU[string, int64](100_000, nil, time.Hour),
+		q:       userdb.New(primary),
+		replica: replica,
+		files:   files,
+		ids:     expirable.NewLRU[string, int64](100_000, nil, time.Hour),
 	}
 }
 

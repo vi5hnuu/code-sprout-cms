@@ -97,6 +97,28 @@ func (q *Queries) DeleteSlugRedirect(ctx context.Context, arg DeleteSlugRedirect
 	return err
 }
 
+const getArticleExt = `-- name: GetArticleExt :one
+SELECT content_id, level FROM article_ext WHERE content_id = $1
+`
+
+func (q *Queries) GetArticleExt(ctx context.Context, contentID int64) (ArticleExt, error) {
+	row := q.db.QueryRow(ctx, getArticleExt, contentID)
+	var i ArticleExt
+	err := row.Scan(&i.ContentID, &i.Level)
+	return i, err
+}
+
+const getBlogExt = `-- name: GetBlogExt :one
+SELECT content_id, cover_file_id FROM blog_ext WHERE content_id = $1
+`
+
+func (q *Queries) GetBlogExt(ctx context.Context, contentID int64) (BlogExt, error) {
+	row := q.db.QueryRow(ctx, getBlogExt, contentID)
+	var i BlogExt
+	err := row.Scan(&i.ContentID, &i.CoverFileID)
+	return i, err
+}
+
 const getContent = `-- name: GetContent :one
 SELECT id, type, locale, slug, title, summary, status, review_state, visibility, access, author_id, primary_category_id, last_rev_no, draft_rev_no, published_rev_no, scheduled_at, published_at, last_published_at, translation_group_id, created_at, updated_at, deleted_at FROM content WHERE id = $1 AND deleted_at IS NULL
 `
@@ -139,6 +161,51 @@ SELECT id, type, locale, slug, title, summary, status, review_state, visibility,
 // If-Match check is race-free.
 func (q *Queries) GetContentForUpdate(ctx context.Context, id int64) (Content, error) {
 	row := q.db.QueryRow(ctx, getContentForUpdate, id)
+	var i Content
+	err := row.Scan(
+		&i.ID,
+		&i.Type,
+		&i.Locale,
+		&i.Slug,
+		&i.Title,
+		&i.Summary,
+		&i.Status,
+		&i.ReviewState,
+		&i.Visibility,
+		&i.Access,
+		&i.AuthorID,
+		&i.PrimaryCategoryID,
+		&i.LastRevNo,
+		&i.DraftRevNo,
+		&i.PublishedRevNo,
+		&i.ScheduledAt,
+		&i.PublishedAt,
+		&i.LastPublishedAt,
+		&i.TranslationGroupID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const getLiveBySlug = `-- name: GetLiveBySlug :one
+
+SELECT id, type, locale, slug, title, summary, status, review_state, visibility, access, author_id, primary_category_id, last_rev_no, draft_rev_no, published_rev_no, scheduled_at, published_at, last_published_at, translation_group_id, created_at, updated_at, deleted_at FROM content
+WHERE type = $1 AND locale = $2 AND slug = $3
+  AND status = 'PUBLISHED' AND visibility <> 'PRIVATE' AND deleted_at IS NULL
+`
+
+type GetLiveBySlugParams struct {
+	Type   string
+	Locale string
+	Slug   string
+}
+
+// ── Public reads (replica) ──────────────────────────────────────────────────
+// UNLISTED items resolve by URL; PRIVATE ones never do.
+func (q *Queries) GetLiveBySlug(ctx context.Context, arg GetLiveBySlugParams) (Content, error) {
+	row := q.db.QueryRow(ctx, getLiveBySlug, arg.Type, arg.Locale, arg.Slug)
 	var i Content
 	err := row.Scan(
 		&i.ID,
@@ -455,6 +522,30 @@ func (q *Queries) ListAuthorContent(ctx context.Context, arg ListAuthorContentPa
 	return items, nil
 }
 
+const listContentAssetIDs = `-- name: ListContentAssetIDs :many
+SELECT file_id FROM content_asset WHERE content_id = $1
+`
+
+func (q *Queries) ListContentAssetIDs(ctx context.Context, contentID int64) ([]int64, error) {
+	rows, err := q.db.Query(ctx, listContentAssetIDs, contentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var file_id int64
+		if err := rows.Scan(&file_id); err != nil {
+			return nil, err
+		}
+		items = append(items, file_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listContentTagIDs = `-- name: ListContentTagIDs :many
 SELECT tag_id FROM content_tag WHERE content_id = $1 ORDER BY tag_id
 `
@@ -472,6 +563,350 @@ func (q *Queries) ListContentTagIDs(ctx context.Context, contentID int64) ([]int
 			return nil, err
 		}
 		items = append(items, tag_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLiveByAuthor = `-- name: ListLiveByAuthor :many
+SELECT id, type, locale, slug, title, summary, status, review_state, visibility, access, author_id, primary_category_id, last_rev_no, draft_rev_no, published_rev_no, scheduled_at, published_at, last_published_at, translation_group_id, created_at, updated_at, deleted_at FROM content
+WHERE author_id = $1
+  AND status = 'PUBLISHED' AND visibility = 'PUBLIC' AND deleted_at IS NULL
+  AND ($2::timestamptz IS NULL
+       OR (published_at, id) < ($2::timestamptz, $3::bigint))
+ORDER BY published_at DESC, id DESC
+LIMIT $4
+`
+
+type ListLiveByAuthorParams struct {
+	AuthorID       int64
+	AfterPublished *time.Time
+	AfterID        *int64
+	RowLimit       int32
+}
+
+func (q *Queries) ListLiveByAuthor(ctx context.Context, arg ListLiveByAuthorParams) ([]Content, error) {
+	rows, err := q.db.Query(ctx, listLiveByAuthor,
+		arg.AuthorID,
+		arg.AfterPublished,
+		arg.AfterID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Content{}
+	for rows.Next() {
+		var i Content
+		if err := rows.Scan(
+			&i.ID,
+			&i.Type,
+			&i.Locale,
+			&i.Slug,
+			&i.Title,
+			&i.Summary,
+			&i.Status,
+			&i.ReviewState,
+			&i.Visibility,
+			&i.Access,
+			&i.AuthorID,
+			&i.PrimaryCategoryID,
+			&i.LastRevNo,
+			&i.DraftRevNo,
+			&i.PublishedRevNo,
+			&i.ScheduledAt,
+			&i.PublishedAt,
+			&i.LastPublishedAt,
+			&i.TranslationGroupID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLiveByCategory = `-- name: ListLiveByCategory :many
+SELECT id, type, locale, slug, title, summary, status, review_state, visibility, access, author_id, primary_category_id, last_rev_no, draft_rev_no, published_rev_no, scheduled_at, published_at, last_published_at, translation_group_id, created_at, updated_at, deleted_at FROM content
+WHERE primary_category_id = $1
+  AND status = 'PUBLISHED' AND visibility = 'PUBLIC' AND deleted_at IS NULL
+  AND ($2::text IS NULL OR type = $2::text)
+  AND ($3::timestamptz IS NULL
+       OR (published_at, id) < ($3::timestamptz, $4::bigint))
+ORDER BY published_at DESC, id DESC
+LIMIT $5
+`
+
+type ListLiveByCategoryParams struct {
+	CategoryID     *int64
+	Type           *string
+	AfterPublished *time.Time
+	AfterID        *int64
+	RowLimit       int32
+}
+
+func (q *Queries) ListLiveByCategory(ctx context.Context, arg ListLiveByCategoryParams) ([]Content, error) {
+	rows, err := q.db.Query(ctx, listLiveByCategory,
+		arg.CategoryID,
+		arg.Type,
+		arg.AfterPublished,
+		arg.AfterID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Content{}
+	for rows.Next() {
+		var i Content
+		if err := rows.Scan(
+			&i.ID,
+			&i.Type,
+			&i.Locale,
+			&i.Slug,
+			&i.Title,
+			&i.Summary,
+			&i.Status,
+			&i.ReviewState,
+			&i.Visibility,
+			&i.Access,
+			&i.AuthorID,
+			&i.PrimaryCategoryID,
+			&i.LastRevNo,
+			&i.DraftRevNo,
+			&i.PublishedRevNo,
+			&i.ScheduledAt,
+			&i.PublishedAt,
+			&i.LastPublishedAt,
+			&i.TranslationGroupID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLiveByTag = `-- name: ListLiveByTag :many
+SELECT c.id, c.type, c.locale, c.slug, c.title, c.summary, c.status, c.review_state, c.visibility, c.access, c.author_id, c.primary_category_id, c.last_rev_no, c.draft_rev_no, c.published_rev_no, c.scheduled_at, c.published_at, c.last_published_at, c.translation_group_id, c.created_at, c.updated_at, c.deleted_at FROM content_tag ct
+JOIN content c ON c.id = ct.content_id
+WHERE ct.tag_id = $1 AND ct.published_at IS NOT NULL
+  AND ($2::text IS NULL OR c.type = $2::text)
+  AND ($3::timestamptz IS NULL
+       OR (ct.published_at, ct.content_id) < ($3::timestamptz, $4::bigint))
+ORDER BY ct.published_at DESC, ct.content_id DESC
+LIMIT $5
+`
+
+type ListLiveByTagParams struct {
+	TagID          int64
+	Type           *string
+	AfterPublished *time.Time
+	AfterID        *int64
+	RowLimit       int32
+}
+
+// Driven by the (tag_id, published_at, content_id) index; the join only fetches the rows.
+func (q *Queries) ListLiveByTag(ctx context.Context, arg ListLiveByTagParams) ([]Content, error) {
+	rows, err := q.db.Query(ctx, listLiveByTag,
+		arg.TagID,
+		arg.Type,
+		arg.AfterPublished,
+		arg.AfterID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Content{}
+	for rows.Next() {
+		var i Content
+		if err := rows.Scan(
+			&i.ID,
+			&i.Type,
+			&i.Locale,
+			&i.Slug,
+			&i.Title,
+			&i.Summary,
+			&i.Status,
+			&i.ReviewState,
+			&i.Visibility,
+			&i.Access,
+			&i.AuthorID,
+			&i.PrimaryCategoryID,
+			&i.LastRevNo,
+			&i.DraftRevNo,
+			&i.PublishedRevNo,
+			&i.ScheduledAt,
+			&i.PublishedAt,
+			&i.LastPublishedAt,
+			&i.TranslationGroupID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLiveByType = `-- name: ListLiveByType :many
+SELECT id, type, locale, slug, title, summary, status, review_state, visibility, access, author_id, primary_category_id, last_rev_no, draft_rev_no, published_rev_no, scheduled_at, published_at, last_published_at, translation_group_id, created_at, updated_at, deleted_at FROM content
+WHERE type = $1 AND locale = $2
+  AND status = 'PUBLISHED' AND visibility = 'PUBLIC' AND deleted_at IS NULL
+  AND ($3::timestamptz IS NULL
+       OR (published_at, id) < ($3::timestamptz, $4::bigint))
+ORDER BY published_at DESC, id DESC
+LIMIT $5
+`
+
+type ListLiveByTypeParams struct {
+	Type           string
+	Locale         string
+	AfterPublished *time.Time
+	AfterID        *int64
+	RowLimit       int32
+}
+
+func (q *Queries) ListLiveByType(ctx context.Context, arg ListLiveByTypeParams) ([]Content, error) {
+	rows, err := q.db.Query(ctx, listLiveByType,
+		arg.Type,
+		arg.Locale,
+		arg.AfterPublished,
+		arg.AfterID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Content{}
+	for rows.Next() {
+		var i Content
+		if err := rows.Scan(
+			&i.ID,
+			&i.Type,
+			&i.Locale,
+			&i.Slug,
+			&i.Title,
+			&i.Summary,
+			&i.Status,
+			&i.ReviewState,
+			&i.Visibility,
+			&i.Access,
+			&i.AuthorID,
+			&i.PrimaryCategoryID,
+			&i.LastRevNo,
+			&i.DraftRevNo,
+			&i.PublishedRevNo,
+			&i.ScheduledAt,
+			&i.PublishedAt,
+			&i.LastPublishedAt,
+			&i.TranslationGroupID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLiveLinks = `-- name: ListLiveLinks :many
+SELECT l.kind, c.id, c.type, c.locale, c.slug, c.title
+FROM content_link l
+JOIN content c ON c.id = l.to_id
+WHERE l.from_id = $1 AND c.status = 'PUBLISHED' AND c.visibility <> 'PRIVATE' AND c.deleted_at IS NULL
+ORDER BY l.kind, l.position
+`
+
+type ListLiveLinksRow struct {
+	Kind   string
+	ID     int64
+	Type   string
+	Locale string
+	Slug   string
+	Title  string
+}
+
+// Live targets of an item's links (e.g. its practice problems), in authored order.
+func (q *Queries) ListLiveLinks(ctx context.Context, fromID int64) ([]ListLiveLinksRow, error) {
+	rows, err := q.db.Query(ctx, listLiveLinks, fromID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListLiveLinksRow{}
+	for rows.Next() {
+		var i ListLiveLinksRow
+		if err := rows.Scan(
+			&i.Kind,
+			&i.ID,
+			&i.Type,
+			&i.Locale,
+			&i.Slug,
+			&i.Title,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRenders = `-- name: ListRenders :many
+SELECT content_id, reading_minutes, word_count FROM content_render WHERE content_id = ANY ($1::bigint[])
+`
+
+type ListRendersRow struct {
+	ContentID      int64
+	ReadingMinutes int32
+	WordCount      int32
+}
+
+func (q *Queries) ListRenders(ctx context.Context, ids []int64) ([]ListRendersRow, error) {
+	rows, err := q.db.Query(ctx, listRenders, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListRendersRow{}
+	for rows.Next() {
+		var i ListRendersRow
+		if err := rows.Scan(&i.ContentID, &i.ReadingMinutes, &i.WordCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -798,6 +1233,27 @@ func (q *Queries) PublishContent(ctx context.Context, arg PublishContentParams) 
 		&i.DeletedAt,
 	)
 	return i, err
+}
+
+const resolveRedirect = `-- name: ResolveRedirect :one
+SELECT c.slug FROM slug_redirect r
+JOIN content c ON c.id = r.content_id
+WHERE r.type = $1 AND r.locale = $2 AND r.old_slug = $3
+  AND c.status = 'PUBLISHED' AND c.visibility <> 'PRIVATE' AND c.deleted_at IS NULL
+`
+
+type ResolveRedirectParams struct {
+	Type   string
+	Locale string
+	Slug   string
+}
+
+// Where an old slug now points, so the page can answer with a permanent redirect.
+func (q *Queries) ResolveRedirect(ctx context.Context, arg ResolveRedirectParams) (string, error) {
+	row := q.db.QueryRow(ctx, resolveRedirect, arg.Type, arg.Locale, arg.Slug)
+	var slug string
+	err := row.Scan(&slug)
+	return slug, err
 }
 
 const setContentStatus = `-- name: SetContentStatus :exec

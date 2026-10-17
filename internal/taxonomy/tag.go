@@ -223,3 +223,19 @@ func (s *Service) ExistingTagIDs(ctx context.Context, ids []int64) ([]int64, err
 	}
 	return taxonomydb.New(s.db.Primary).ExistingTagIDs(ctx, ids)
 }
+
+// TagsByID batch-loads tags for display, ordered by kind then name.
+func (s *Service) TagsByID(ctx context.Context, ids []int64) ([]Tag, error) {
+	if len(ids) == 0 {
+		return []Tag{}, nil
+	}
+	rows, err := taxonomydb.New(s.db.Replica).ListTagsByID(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	tags := make([]Tag, len(rows))
+	for i, r := range rows {
+		tags[i] = tagFromRow(r)
+	}
+	return tags, nil
+}

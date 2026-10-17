@@ -3,11 +3,13 @@ package user
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"code-sprout-cms/internal/access"
+	"code-sprout-cms/internal/asset"
 	"code-sprout-cms/internal/platform/apperr"
 	"code-sprout-cms/internal/platform/testenv"
 )
@@ -28,7 +30,7 @@ func TestResolveIDProvisionsOnceUnderConcurrency(t *testing.T) {
 	for i := range callers {
 		wg.Go(func() {
 			// Separate services → separate caches, so every caller really hits the database.
-			id, err := NewService(d.Primary).ResolveID(ctx, sub, "Asha")
+			id, err := NewService(d.Primary, d.Replica, nil).ResolveID(ctx, sub, "Asha")
 			if err != nil {
 				t.Errorf("resolve: %v", err)
 			}
@@ -53,7 +55,7 @@ func TestResolveIDProvisionsOnceUnderConcurrency(t *testing.T) {
 
 func TestProfile(t *testing.T) {
 	d := testenv.DB(t)
-	svc := NewService(d.Primary)
+	svc := NewService(d.Primary, d.Replica, nil)
 	ctx := context.Background()
 
 	id, err := svc.ResolveID(ctx, uniqueSub(t), "  ")
@@ -78,5 +80,41 @@ func TestProfile(t *testing.T) {
 	_, err = svc.Profile(ctx, -1)
 	if e, ok := apperr.As(err); !ok || e.Kind != apperr.KindNotFound {
 		t.Fatalf("missing user: err = %v", err)
+	}
+}
+
+func TestUpdateProfile(t *testing.T) {
+	d := testenv.DB(t)
+	files := asset.NewService(d, nil, asset.Config{PublicBucket: "sprout-public", PublicBaseURL: "https://cdn.test"})
+	svc := NewService(d.Primary, d.Replica, files)
+	ctx := context.Background()
+	a, _ := svc.ResolveID(ctx, uniqueSub(t), "A")
+	b, _ := svc.ResolveID(ctx, uniqueSub(t), "B")
+	handle := strings.ReplaceAll(testenv.Unique("h"), "-", "_") // unique per run, valid handle charset
+
+	p, err := svc.UpdateProfile(ctx, a, UpdateProfile{Handle: &handle, DisplayName: " Asha "})
+	if err != nil || p.Handle == nil || *p.Handle != handle || p.DisplayName != "Asha" {
+		t.Fatalf("update = %+v, %v", p, err)
+	}
+	upper := strings.ToUpper(handle)
+	_, err = svc.UpdateProfile(ctx, b, UpdateProfile{Handle: &upper, DisplayName: "B"})
+	if e, ok := apperr.As(err); !ok || e.Code != "user.handle_taken" {
+		t.Fatalf("case-insensitive duplicate handle: %v", err)
+	}
+	for _, bad := range []string{"admin", "ab", "has space", "-lead"} {
+		h := bad
+		_, err = svc.UpdateProfile(ctx, b, UpdateProfile{Handle: &h, DisplayName: "B"})
+		if e, ok := apperr.As(err); !ok || e.Fields["handle"] == "" {
+			t.Fatalf("handle %q accepted (%v)", bad, err)
+		}
+	}
+	notAvatar := int64(999999999)
+	_, err = svc.UpdateProfile(ctx, b, UpdateProfile{DisplayName: "B", AvatarFileID: &notAvatar})
+	if e, ok := apperr.As(err); !ok || e.Fields["avatarFileId"] == "" {
+		t.Fatalf("unknown avatar accepted: %v", err)
+	}
+	pub, err := svc.ByHandle(ctx, handle)
+	if err != nil || pub.ID != a || pub.DisplayName != "Asha" {
+		t.Fatalf("by handle = %+v, %v", pub, err)
 	}
 }

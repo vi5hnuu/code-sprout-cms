@@ -50,6 +50,33 @@ func (q *Queries) GetUser(ctx context.Context, id int64) (GetUserRow, error) {
 	return i, err
 }
 
+const getUserByHandle = `-- name: GetUserByHandle :one
+SELECT id, handle, display_name, bio, avatar_file_id, created_at FROM app_user WHERE handle = $1
+`
+
+type GetUserByHandleRow struct {
+	ID           int64
+	Handle       *string
+	DisplayName  string
+	Bio          *string
+	AvatarFileID *int64
+	CreatedAt    time.Time
+}
+
+func (q *Queries) GetUserByHandle(ctx context.Context, handle *string) (GetUserByHandleRow, error) {
+	row := q.db.QueryRow(ctx, getUserByHandle, handle)
+	var i GetUserByHandleRow
+	err := row.Scan(
+		&i.ID,
+		&i.Handle,
+		&i.DisplayName,
+		&i.Bio,
+		&i.AvatarFileID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const insertUser = `-- name: InsertUser :one
 INSERT INTO app_user (auth_sub, display_name)
 VALUES ($1, $2)
@@ -69,6 +96,44 @@ func (q *Queries) InsertUser(ctx context.Context, arg InsertUserParams) (int64, 
 	var id int64
 	err := row.Scan(&id)
 	return id, err
+}
+
+const listPublicUsers = `-- name: ListPublicUsers :many
+SELECT id, handle, display_name, bio, avatar_file_id FROM app_user WHERE id = ANY ($1::bigint[])
+`
+
+type ListPublicUsersRow struct {
+	ID           int64
+	Handle       *string
+	DisplayName  string
+	Bio          *string
+	AvatarFileID *int64
+}
+
+func (q *Queries) ListPublicUsers(ctx context.Context, ids []int64) ([]ListPublicUsersRow, error) {
+	rows, err := q.db.Query(ctx, listPublicUsers, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPublicUsersRow{}
+	for rows.Next() {
+		var i ListPublicUsersRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Handle,
+			&i.DisplayName,
+			&i.Bio,
+			&i.AvatarFileID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listRoleGrants = `-- name: ListRoleGrants :many
@@ -101,4 +166,49 @@ func (q *Queries) ListRoleGrants(ctx context.Context, userID int64) ([]ListRoleG
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateProfile = `-- name: UpdateProfile :one
+UPDATE app_user
+SET handle = $1, display_name = $2, bio = $3,
+    avatar_file_id = $4, updated_at = now()
+WHERE id = $5
+RETURNING id, handle, display_name, bio, avatar_file_id, created_at
+`
+
+type UpdateProfileParams struct {
+	Handle       *string
+	DisplayName  string
+	Bio          *string
+	AvatarFileID *int64
+	ID           int64
+}
+
+type UpdateProfileRow struct {
+	ID           int64
+	Handle       *string
+	DisplayName  string
+	Bio          *string
+	AvatarFileID *int64
+	CreatedAt    time.Time
+}
+
+func (q *Queries) UpdateProfile(ctx context.Context, arg UpdateProfileParams) (UpdateProfileRow, error) {
+	row := q.db.QueryRow(ctx, updateProfile,
+		arg.Handle,
+		arg.DisplayName,
+		arg.Bio,
+		arg.AvatarFileID,
+		arg.ID,
+	)
+	var i UpdateProfileRow
+	err := row.Scan(
+		&i.ID,
+		&i.Handle,
+		&i.DisplayName,
+		&i.Bio,
+		&i.AvatarFileID,
+		&i.CreatedAt,
+	)
+	return i, err
 }

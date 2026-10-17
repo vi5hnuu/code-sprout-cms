@@ -103,3 +103,9 @@ SELECT COALESCE(max(nlevel(path)), 0)::int FROM category WHERE path <@ sqlc.arg(
 
 -- name: ExistingTagIDs :many
 SELECT id FROM tag WHERE id = ANY (sqlc.arg(ids)::bigint[]) ORDER BY id;
+
+-- name: ListCategoriesByID :many
+SELECT * FROM category WHERE id = ANY (sqlc.arg(ids)::bigint[]);
+
+-- name: ListTagsByID :many
+SELECT * FROM tag WHERE id = ANY (sqlc.arg(ids)::bigint[]) ORDER BY kind, name;

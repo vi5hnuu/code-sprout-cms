@@ -33,6 +33,8 @@ tags:
     description: Probes for the load balancer and orchestrator.
   - name: me
     description: The signed-in user's own profile and state.
+  - name: content
+    description: Public pages and listings (cacheable; identical for every reader).
   - name: taxonomy
     description: Category tree (site sections) and tags.
   - name: studio
@@ -638,6 +640,96 @@ paths:
         "404": { $ref: "#/components/responses/Problem" }
         "409": { $ref: "#/components/responses/Problem" }
 
+  /v1/me/profile:
+    put:
+      tags: [me]
+      operationId: updateProfile
+      summary: Set the public profile (handle, display name, bio, avatar).
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateProfile" }
+      responses:
+        "200":
+          description: Updated profile
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Me" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /v1/public/users/{handle}:
+    get:
+      tags: [content]
+      operationId: getPublicUser
+      summary: An author's public profile.
+      security: []
+      parameters:
+        - { name: handle, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Profile
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublicUser" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /v1/public/content:
+    get:
+      tags: [content]
+      operationId: listContent
+      summary: Live, public items newest first.
+      description: Pass `type`, or one of `category`, `tag` or `author` (optionally with `type`).
+      security: []
+      parameters:
+        - { name: type, in: query, schema: { type: string, enum: [article, blog, problem, topic_page, quiz] } }
+        - { name: category, in: query, schema: { type: string }, example: dsa/algorithms }
+        - { name: tag, in: query, description: "kind:slug", schema: { type: string }, example: "topic:arrays" }
+        - { name: author, in: query, description: Author handle., schema: { type: string } }
+        - { name: locale, in: query, schema: { type: string, default: en } }
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200":
+          description: Page of items
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ListItemPage" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /v1/public/content/{type}/{slug}:
+    get:
+      tags: [content]
+      operationId: getPublicPage
+      summary: A live item as readers see it.
+      description: |
+        A renamed item's old slug answers 301 with `Location` and `{redirect: {slug}}`; the web
+        app issues its own 301 to the new URL. PREMIUM items are `locked` with no `body`.
+      security: []
+      parameters:
+        - { name: type, in: path, required: true, schema: { type: string, enum: [article, blog, problem, topic_page, quiz] } }
+        - { name: slug, in: path, required: true, schema: { type: string } }
+        - { name: locale, in: query, schema: { type: string, default: en } }
+      responses:
+        "200":
+          description: Page
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublicPage" }
+        "301":
+          description: The slug was renamed
+          headers:
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [redirect]
+                properties:
+                  redirect: { type: object, required: [slug], properties: { slug: { type: string } } }
+        "404": { $ref: "#/components/responses/Problem" }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1039,3 +1131,113 @@ components:
       additionalProperties: false
       properties:
         at: { type: string, format: date-time, description: Between one minute and one year from now. }
+
+    UpdateProfile:
+      type: object
+      required: [displayName]
+      additionalProperties: false
+      properties:
+        handle: { type: [string, "null"], pattern: "^[a-z0-9](?:[a-z0-9_-]{1,28}[a-z0-9])?$" }
+        displayName: { type: string, maxLength: 60 }
+        bio: { type: [string, "null"], maxLength: 300 }
+        avatarFileId: { type: [integer, "null"], format: int64, description: A READY upload with purpose AVATAR. }
+    PublicUser:
+      type: object
+      required: [id, handle, displayName, bio, avatarUrl]
+      properties:
+        id: { type: integer, format: int64 }
+        handle: { type: [string, "null"] }
+        displayName: { type: string }
+        bio: { type: [string, "null"] }
+        avatarUrl: { type: [string, "null"] }
+    Stats:
+      type: object
+      required: [views, likes, comments, bookmarks, shares]
+      properties:
+        views: { type: integer, format: int64 }
+        likes: { type: integer, format: int64 }
+        comments: { type: integer, format: int64 }
+        bookmarks: { type: integer, format: int64 }
+        shares: { type: integer, format: int64 }
+    Heading:
+      type: object
+      required: [level, text, id]
+      properties:
+        level: { type: integer, enum: [2, 3] }
+        text: { type: string }
+        id: { type: string, description: Anchor id (docs/sprout-markdown.md heading ids). }
+    PublicLink:
+      type: object
+      required: [kind, id, type, locale, slug, title]
+      properties:
+        kind: { type: string, enum: [PRACTICE, RELATED, PREREQUISITE, EDITORIAL] }
+        id: { type: integer, format: int64 }
+        type: { $ref: "#/components/schemas/ContentType" }
+        locale: { type: string }
+        slug: { type: string }
+        title: { type: string }
+    PublicPage:
+      type: object
+      required: [id, type, locale, slug, title, summary, access, unlisted, locked, body, toc, readingMinutes, wordCount, publishedAt, lastPublishedAt, author, breadcrumb, tags, assets, links, stats]
+      properties:
+        id: { type: integer, format: int64 }
+        type: { $ref: "#/components/schemas/ContentType" }
+        locale: { type: string }
+        slug: { type: string }
+        title: { type: string }
+        summary: { type: [string, "null"] }
+        access: { type: string, enum: [FREE, PREMIUM] }
+        unlisted: { type: boolean, description: Render with robots noindex. }
+        locked: { type: boolean, description: PREMIUM; the body is not in this response. }
+        body: { type: [string, "null"], description: Sprout Markdown. }
+        toc: { type: array, items: { $ref: "#/components/schemas/Heading" } }
+        readingMinutes: { type: integer }
+        wordCount: { type: integer }
+        publishedAt: { type: string, format: date-time }
+        lastPublishedAt: { type: string, format: date-time }
+        author: { $ref: "#/components/schemas/PublicUser" }
+        breadcrumb: { type: array, items: { $ref: "#/components/schemas/Category" } }
+        tags: { type: array, items: { $ref: "#/components/schemas/Tag" } }
+        assets:
+          type: object
+          description: "File by id: resolves `asset:<id>` references in the body."
+          additionalProperties: { $ref: "#/components/schemas/File" }
+        links: { type: array, items: { $ref: "#/components/schemas/PublicLink" } }
+        article:
+          type: object
+          properties:
+            level: { type: [string, "null"] }
+        blog:
+          type: object
+          properties:
+            cover:
+              oneOf:
+                - type: "null"
+                - $ref: "#/components/schemas/File"
+        stats: { $ref: "#/components/schemas/Stats" }
+    ListItem:
+      type: object
+      required: [id, type, locale, slug, title, summary, access, publishedAt, lastPublishedAt, readingMinutes, category, author, stats]
+      properties:
+        id: { type: integer, format: int64 }
+        type: { $ref: "#/components/schemas/ContentType" }
+        locale: { type: string }
+        slug: { type: string }
+        title: { type: string }
+        summary: { type: [string, "null"] }
+        access: { type: string, enum: [FREE, PREMIUM] }
+        publishedAt: { type: string, format: date-time }
+        lastPublishedAt: { type: string, format: date-time }
+        readingMinutes: { type: integer }
+        category:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/Category"
+        author: { $ref: "#/components/schemas/PublicUser" }
+        stats: { $ref: "#/components/schemas/Stats" }
+    ListItemPage:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/ListItem" } }
+        nextCursor: { type: [string, "null"] }

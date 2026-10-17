@@ -194,3 +194,77 @@ SELECT * FROM review WHERE content_id = $1 ORDER BY created_at DESC LIMIT 50;
 
 -- name: ListReviewNotes :many
 SELECT * FROM review_note WHERE review_id = ANY (sqlc.arg(review_ids)::bigint[]) ORDER BY id;
+
+-- ── Public reads (replica) ──────────────────────────────────────────────────
+
+-- UNLISTED items resolve by URL; PRIVATE ones never do.
+-- name: GetLiveBySlug :one
+SELECT * FROM content
+WHERE type = sqlc.arg(type) AND locale = sqlc.arg(locale) AND slug = sqlc.arg(slug)
+  AND status = 'PUBLISHED' AND visibility <> 'PRIVATE' AND deleted_at IS NULL;
+
+-- Where an old slug now points, so the page can answer with a permanent redirect.
+-- name: ResolveRedirect :one
+SELECT c.slug FROM slug_redirect r
+JOIN content c ON c.id = r.content_id
+WHERE r.type = sqlc.arg(type) AND r.locale = sqlc.arg(locale) AND r.old_slug = sqlc.arg(slug)
+  AND c.status = 'PUBLISHED' AND c.visibility <> 'PRIVATE' AND c.deleted_at IS NULL;
+
+-- name: ListLiveByType :many
+SELECT * FROM content
+WHERE type = sqlc.arg(type) AND locale = sqlc.arg(locale)
+  AND status = 'PUBLISHED' AND visibility = 'PUBLIC' AND deleted_at IS NULL
+  AND (sqlc.narg(after_published)::timestamptz IS NULL
+       OR (published_at, id) < (sqlc.narg(after_published)::timestamptz, sqlc.narg(after_id)::bigint))
+ORDER BY published_at DESC, id DESC
+LIMIT sqlc.arg(row_limit);
+
+-- name: ListLiveByCategory :many
+SELECT * FROM content
+WHERE primary_category_id = sqlc.arg(category_id)
+  AND status = 'PUBLISHED' AND visibility = 'PUBLIC' AND deleted_at IS NULL
+  AND (sqlc.narg(type)::text IS NULL OR type = sqlc.narg(type)::text)
+  AND (sqlc.narg(after_published)::timestamptz IS NULL
+       OR (published_at, id) < (sqlc.narg(after_published)::timestamptz, sqlc.narg(after_id)::bigint))
+ORDER BY published_at DESC, id DESC
+LIMIT sqlc.arg(row_limit);
+
+-- Driven by the (tag_id, published_at, content_id) index; the join only fetches the rows.
+-- name: ListLiveByTag :many
+SELECT c.* FROM content_tag ct
+JOIN content c ON c.id = ct.content_id
+WHERE ct.tag_id = sqlc.arg(tag_id) AND ct.published_at IS NOT NULL
+  AND (sqlc.narg(type)::text IS NULL OR c.type = sqlc.narg(type)::text)
+  AND (sqlc.narg(after_published)::timestamptz IS NULL
+       OR (ct.published_at, ct.content_id) < (sqlc.narg(after_published)::timestamptz, sqlc.narg(after_id)::bigint))
+ORDER BY ct.published_at DESC, ct.content_id DESC
+LIMIT sqlc.arg(row_limit);
+
+-- name: ListLiveByAuthor :many
+SELECT * FROM content
+WHERE author_id = sqlc.arg(author_id)
+  AND status = 'PUBLISHED' AND visibility = 'PUBLIC' AND deleted_at IS NULL
+  AND (sqlc.narg(after_published)::timestamptz IS NULL
+       OR (published_at, id) < (sqlc.narg(after_published)::timestamptz, sqlc.narg(after_id)::bigint))
+ORDER BY published_at DESC, id DESC
+LIMIT sqlc.arg(row_limit);
+
+-- name: ListRenders :many
+SELECT content_id, reading_minutes, word_count FROM content_render WHERE content_id = ANY (sqlc.arg(ids)::bigint[]);
+
+-- name: ListContentAssetIDs :many
+SELECT file_id FROM content_asset WHERE content_id = $1;
+
+-- Live targets of an item's links (e.g. its practice problems), in authored order.
+-- name: ListLiveLinks :many
+SELECT l.kind, c.id, c.type, c.locale, c.slug, c.title
+FROM content_link l
+JOIN content c ON c.id = l.to_id
+WHERE l.from_id = $1 AND c.status = 'PUBLISHED' AND c.visibility <> 'PRIVATE' AND c.deleted_at IS NULL
+ORDER BY l.kind, l.position;
+
+-- name: GetArticleExt :one
+SELECT * FROM article_ext WHERE content_id = $1;
+
+-- name: GetBlogExt :one
+SELECT * FROM blog_ext WHERE content_id = $1;

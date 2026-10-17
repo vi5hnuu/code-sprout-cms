@@ -391,3 +391,54 @@ func mapCategoryErr(err error) error {
 	}
 	return err
 }
+
+// CategoriesByID batch-loads categories (missing ids are absent), for listings that show
+// each item's section.
+func (s *Service) CategoriesByID(ctx context.Context, ids []int64) (map[int64]Category, error) {
+	out := make(map[int64]Category, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := taxonomydb.New(s.db.Replica).ListCategoriesByID(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range rows {
+		out[r.ID] = fromRow(r)
+	}
+	return out, nil
+}
+
+// Trail returns the root-first breadcrumb ending at the category itself.
+func (s *Service) Trail(ctx context.Context, id int64) ([]Category, error) {
+	q := taxonomydb.New(s.db.Replica)
+	c, err := q.GetCategory(ctx, id)
+	if db.IsNoRows(err) {
+		return []Category{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	ancestors, err := q.ListCategoryAncestors(ctx, c.Path)
+	if err != nil {
+		return nil, err
+	}
+	return append(fromRows(ancestors), fromRow(c)), nil
+}
+
+// ByURLPath resolves "dsa/algorithms" to its category (for listing filters).
+func (s *Service) ByURLPath(ctx context.Context, urlPath string) (Category, error) {
+	notFound := apperr.NotFound("category.not_found", "No such category.")
+	path, ok := toLtree(urlPath)
+	if !ok {
+		return Category{}, notFound
+	}
+	c, err := taxonomydb.New(s.db.Replica).GetCategoryByPath(ctx, path)
+	if db.IsNoRows(err) {
+		return Category{}, notFound
+	}
+	if err != nil {
+		return Category{}, err
+	}
+	return fromRow(c), nil
+}

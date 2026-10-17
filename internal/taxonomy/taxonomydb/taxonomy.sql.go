@@ -229,6 +229,41 @@ func (q *Queries) InsertTag(ctx context.Context, arg InsertTagParams) (int64, er
 	return id, err
 }
 
+const listCategoriesByID = `-- name: ListCategoriesByID :many
+SELECT id, parent_id, path, slug, name, description, position, seo, created_at, updated_at FROM category WHERE id = ANY ($1::bigint[])
+`
+
+func (q *Queries) ListCategoriesByID(ctx context.Context, ids []int64) ([]Category, error) {
+	rows, err := q.db.Query(ctx, listCategoriesByID, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Category{}
+	for rows.Next() {
+		var i Category
+		if err := rows.Scan(
+			&i.ID,
+			&i.ParentID,
+			&i.Path,
+			&i.Slug,
+			&i.Name,
+			&i.Description,
+			&i.Position,
+			&i.Seo,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listCategoryAncestors = `-- name: ListCategoryAncestors :many
 SELECT id, parent_id, path, slug, name, description, position, seo, created_at, updated_at FROM category
 WHERE path @> $1::ltree AND path <> $1::ltree
@@ -361,6 +396,37 @@ func (q *Queries) ListTags(ctx context.Context, arg ListTagsParams) ([]Tag, erro
 		arg.AfterID,
 		arg.RowLimit,
 	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Tag{}
+	for rows.Next() {
+		var i Tag
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.Slug,
+			&i.Name,
+			&i.Description,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTagsByID = `-- name: ListTagsByID :many
+SELECT id, kind, slug, name, description, created_at FROM tag WHERE id = ANY ($1::bigint[]) ORDER BY kind, name
+`
+
+func (q *Queries) ListTagsByID(ctx context.Context, ids []int64) ([]Tag, error) {
+	rows, err := q.db.Query(ctx, listTagsByID, ids)
 	if err != nil {
 		return nil, err
 	}

@@ -52,11 +52,14 @@ CREATE TABLE content (
 -- Soft-deleted rows release their slug so it can be reused.
 CREATE UNIQUE INDEX uq_content_slug ON content (type, locale, slug) WHERE deleted_at IS NULL;
 
--- Public listings: newest first by type / by category, keyset-paginated on (published_at, id).
-CREATE INDEX idx_content_live_by_type ON content (type, published_at DESC, id DESC)
-    WHERE status = 'PUBLISHED' AND deleted_at IS NULL;
+-- Public listings: newest first by type / category / author, keyset-paginated on
+-- (published_at, id). Only PUBLIC items are listed; UNLISTED ones are reachable by URL alone.
+CREATE INDEX idx_content_live_by_type ON content (type, locale, published_at DESC, id DESC)
+    WHERE status = 'PUBLISHED' AND visibility = 'PUBLIC' AND deleted_at IS NULL;
 CREATE INDEX idx_content_live_by_category ON content (primary_category_id, published_at DESC, id DESC)
-    WHERE status = 'PUBLISHED' AND deleted_at IS NULL;
+    WHERE status = 'PUBLISHED' AND visibility = 'PUBLIC' AND deleted_at IS NULL;
+CREATE INDEX idx_content_live_by_author ON content (author_id, published_at DESC, id DESC)
+    WHERE status = 'PUBLISHED' AND visibility = 'PUBLIC' AND deleted_at IS NULL;
 
 -- Sitemap chunks are id ranges per type; INCLUDE makes chunk generation an index-only scan.
 CREATE INDEX idx_content_sitemap ON content (type, id) INCLUDE (locale, slug, last_published_at)
@@ -120,7 +123,8 @@ CREATE TABLE slug_redirect (
 );
 
 -- published_at is denormalised from content so "newest in tag X" is one index range scan even
--- for tags with millions of items; the content service keeps it in step on publish/unpublish.
+-- for tags with millions of items. It is set only while the item is live and PUBLIC; the content
+-- service keeps it in step on publish, archive and visibility changes.
 CREATE TABLE content_tag (
     tag_id       bigint NOT NULL REFERENCES tag (id) ON DELETE CASCADE,
     content_id   bigint NOT NULL REFERENCES content (id) ON DELETE CASCADE,

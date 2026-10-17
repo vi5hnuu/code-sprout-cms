@@ -389,7 +389,12 @@ func (s *Service) publishLocked(ctx context.Context, tx pgx.Tx, q *contentdb.Que
 	if err := q.InsertContentAssets(ctx, contentdb.InsertContentAssetsParams{ContentID: c.ID, FileIds: plan.assetIDs}); err != nil {
 		return err
 	}
-	if err := replaceTags(ctx, q, c.ID, meta.TagIDs, live.PublishedAt); err != nil {
+	// Only PUBLIC items appear in tag listings; UNLISTED pages keep their tags but stay out.
+	var listedAt *time.Time
+	if meta.Visibility == VisibilityPublic {
+		listedAt = live.PublishedAt
+	}
+	if err := replaceTags(ctx, q, c.ID, meta.TagIDs, listedAt); err != nil {
 		return err
 	}
 	if err := q.DeleteLinksOfKind(ctx, contentdb.DeleteLinksOfKindParams{FromID: c.ID, Kind: "PRACTICE"}); err != nil {

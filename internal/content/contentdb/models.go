@@ -8,6 +8,16 @@ import (
 	"time"
 )
 
+type ArticleExt struct {
+	ContentID int64
+	Level     *string
+}
+
+type BlogExt struct {
+	ContentID   int64
+	CoverFileID *int64
+}
+
 type Content struct {
 	ID                 int64
 	Type               string
