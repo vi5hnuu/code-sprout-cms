@@ -13,7 +13,12 @@ const ensureMonthlyPartitions = `-- name: EnsureMonthlyPartitions :exec
 SELECT create_monthly_partitions($1::text::regclass, current_date, $2::int)
 `
 
-func (q *Queries) EnsureMonthlyPartitions(ctx context.Context, parent string, months int32) error {
-	_, err := q.db.Exec(ctx, ensureMonthlyPartitions, parent, months)
+type EnsureMonthlyPartitionsParams struct {
+	Parent string
+	Months int32
+}
+
+func (q *Queries) EnsureMonthlyPartitions(ctx context.Context, arg EnsureMonthlyPartitionsParams) error {
+	_, err := q.db.Exec(ctx, ensureMonthlyPartitions, arg.Parent, arg.Months)
 	return err
 }

@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"code-sprout-cms/internal/platform/apperr"
@@ -106,4 +107,14 @@ func (h HandlerFunc) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err := h(w, r); err != nil {
 		Error(w, r, err)
 	}
+}
+
+// PathID parses a positive int64 path parameter, answering 404 for anything else: a
+// non-numeric id cannot name a resource, and 404 avoids hinting at which ids exist.
+func PathID(r *http.Request, name string) (int64, error) {
+	id, err := strconv.ParseInt(r.PathValue(name), 10, 64)
+	if err != nil || id <= 0 {
+		return 0, apperr.NotFound("route.not_found", "No such resource.")
+	}
+	return id, nil
 }

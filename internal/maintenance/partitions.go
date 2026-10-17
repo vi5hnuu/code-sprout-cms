@@ -25,7 +25,7 @@ func KeepPartitionsAhead(ctx context.Context, primary *pgxpool.Pool) {
 	q := maintenancedb.New(primary)
 	ensure := func() {
 		for _, table := range monthlyPartitioned {
-			if err := q.EnsureMonthlyPartitions(ctx, table, monthsAhead+1); err != nil && ctx.Err() == nil {
+			if err := q.EnsureMonthlyPartitions(ctx, maintenancedb.EnsureMonthlyPartitionsParams{Parent: table, Months: monthsAhead + 1}); err != nil && ctx.Err() == nil {
 				slog.Error("ensure partitions", "table", table, "err", err)
 			}
 		}

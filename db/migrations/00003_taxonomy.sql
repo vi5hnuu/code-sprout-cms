@@ -15,7 +15,7 @@ CREATE TABLE category (
     slug        text        NOT NULL CHECK (slug ~ '^[a-z0-9]+(-[a-z0-9]+)*$'),
     name        text        NOT NULL,
     description text,
-    position    numeric     NOT NULL DEFAULT 0,        -- sibling order; fractional → O(1) reorder
+    position    double precision NOT NULL DEFAULT 0,   -- sibling order; fractional → O(1) reorder
     seo         jsonb       NOT NULL DEFAULT '{}',     -- meta title/description overrides
     created_at  timestamptz NOT NULL DEFAULT now(),
     updated_at  timestamptz NOT NULL DEFAULT now(),
@@ -36,6 +36,7 @@ CREATE TABLE tag (
     created_at  timestamptz NOT NULL DEFAULT now(),
     UNIQUE (kind, slug)
 );
+CREATE INDEX idx_tag_kind_name ON tag (kind, name, id);                -- keyset listing per kind
 CREATE INDEX idx_tag_name_trgm ON tag USING gin (name gin_trgm_ops);  -- studio tag picker autocomplete
 
 -- +goose Down

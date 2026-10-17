@@ -151,7 +151,9 @@ CREATE INDEX idx_collection_owner ON collection (owner_id, updated_at DESC);
 CREATE TABLE collection_item (
     collection_id bigint      NOT NULL REFERENCES collection (id) ON DELETE CASCADE,
     content_id    bigint      NOT NULL REFERENCES content (id) ON DELETE CASCADE,
-    position      numeric     NOT NULL,               -- fractional: insert between a and b at (a+b)/2
+    -- Fractional: insert between a and b at (a+b)/2. When a gap gets too small for a double
+    -- to split, the service renumbers that collection's items 1..n.
+    position      double precision NOT NULL,
     added_at      timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (collection_id, content_id)
 );

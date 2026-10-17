@@ -12,9 +12,11 @@ sql:
         sql_package: pgx/v5
         emit_pointers_for_null_types: true
         emit_empty_slices: true
-        query_parameter_limit: 4
+        query_parameter_limit: 1  # 2+ params → a struct with named fields, so a query edit can never silently reorder arguments
         omit_unused_structs: true
         overrides:
+          - db_type: ltree
+            go_type: string
           - db_type: timestamptz
             go_type: time.Time
           - db_type: timestamptz
@@ -38,3 +40,27 @@ sql:
         <<: *go
         package: maintenancedb
         out: internal/maintenance/maintenancedb
+  - engine: postgresql
+    schema: db/migrations
+    queries: db/queries/access.sql
+    gen:
+      go:
+        <<: *go
+        package: accessdb
+        out: internal/access/accessdb
+  - engine: postgresql
+    schema: db/migrations
+    queries: db/queries/audit.sql
+    gen:
+      go:
+        <<: *go
+        package: auditdb
+        out: internal/audit/auditdb
+  - engine: postgresql
+    schema: db/migrations
+    queries: db/queries/taxonomy.sql
+    gen:
+      go:
+        <<: *go
+        package: taxonomydb
+        out: internal/taxonomy/taxonomydb

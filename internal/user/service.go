@@ -11,24 +11,15 @@ import (
 	"github.com/hashicorp/golang-lru/v2/expirable"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"code-sprout-cms/internal/access"
 	"code-sprout-cms/internal/platform/apperr"
 	"code-sprout-cms/internal/platform/db"
 	"code-sprout-cms/internal/user/userdb"
 )
 
-// Role is a CMS editorial role. Auth's ROLE_ADMIN is separate and implies every role.
-type Role string
-
-const (
-	RoleContributor Role = "CONTRIBUTOR"
-	RoleReviewer    Role = "REVIEWER"
-	RoleEditor      Role = "EDITOR"
-	RoleAdmin       Role = "ADMIN"
-)
-
 type RoleGrant struct {
-	Role            Role   `json:"role"`
-	ScopeCategoryID *int64 `json:"scopeCategoryId,omitempty"` // nil = everywhere
+	Role            access.Role `json:"role"`
+	ScopeCategoryID *int64      `json:"scopeCategoryId,omitempty"` // nil = everywhere
 }
 
 type Profile struct {
@@ -63,7 +54,7 @@ func (s *Service) ResolveID(ctx context.Context, sub, displayName string) (int64
 	}
 	id, err := s.q.FindUserIDBySub(ctx, sub)
 	if db.IsNoRows(err) {
-		id, err = s.q.InsertUser(ctx, sub, fallbackDisplayName(displayName))
+		id, err = s.q.InsertUser(ctx, userdb.InsertUserParams{AuthSub: sub, DisplayName: fallbackDisplayName(displayName)})
 		if db.IsNoRows(err) { // lost the insert race to a concurrent request; the row exists now
 			id, err = s.q.FindUserIDBySub(ctx, sub)
 		}
@@ -89,7 +80,7 @@ func (s *Service) Profile(ctx context.Context, id int64) (Profile, error) {
 	}
 	roles := make([]RoleGrant, len(grants))
 	for i, g := range grants {
-		roles[i] = RoleGrant{Role: Role(g.Role), ScopeCategoryID: g.ScopeCategoryID}
+		roles[i] = RoleGrant{Role: access.Role(g.Role), ScopeCategoryID: g.ScopeCategoryID}
 	}
 	return Profile{
 		ID:           u.ID,

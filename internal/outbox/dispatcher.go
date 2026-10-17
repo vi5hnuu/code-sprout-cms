@@ -74,12 +74,14 @@ func (d *Dispatcher) dispatchBatch(ctx context.Context) (int, error) {
 			if herr := d.handle(ctx, e); herr != nil {
 				slog.Warn("outbox event failed", "id", e.ID, "topic", e.Topic, "attempt", e.Attempts+1, "err", herr)
 				msg := truncate(herr.Error(), 2000)
-				if err := q.MarkFailed(ctx, row.CreatedAt, row.ID, &msg, time.Now().Add(Backoff(e.Attempts+1))); err != nil {
+				if err := q.MarkFailed(ctx, outboxdb.MarkFailedParams{
+					CreatedAt: row.CreatedAt, ID: row.ID, LastError: &msg, AvailableAt: time.Now().Add(Backoff(e.Attempts + 1)),
+				}); err != nil {
 					return fmt.Errorf("mark failed: %w", err)
 				}
 				continue
 			}
-			if err := q.MarkProcessed(ctx, row.CreatedAt, row.ID); err != nil {
+			if err := q.MarkProcessed(ctx, outboxdb.MarkProcessedParams{CreatedAt: row.CreatedAt, ID: row.ID}); err != nil {
 				return fmt.Errorf("mark processed: %w", err)
 			}
 		}

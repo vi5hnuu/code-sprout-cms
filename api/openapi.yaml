@@ -33,6 +33,8 @@ tags:
     description: Probes for the load balancer and orchestrator.
   - name: me
     description: The signed-in user's own profile and state.
+  - name: taxonomy
+    description: Category tree (site sections) and tags.
 
 paths:
   /healthz:
@@ -70,6 +72,220 @@ paths:
         "401": { $ref: "#/components/responses/Problem" }
         "429": { $ref: "#/components/responses/Problem" }
 
+  /v1/public/categories:
+    get:
+      tags: [taxonomy]
+      operationId: listRootCategories
+      summary: Top-level sections.
+      security: []
+      responses:
+        "200":
+          description: Root categories in display order
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/Category" } }
+        "429": { $ref: "#/components/responses/Problem" }
+  /v1/public/categories/{path}:
+    get:
+      tags: [taxonomy]
+      operationId: getCategoryByPath
+      summary: A category with its breadcrumb and children.
+      description: "`path` is the slash-separated slug path, e.g. `dsa/algorithms/searching`."
+      security: []
+      parameters:
+        - { name: path, in: path, required: true, schema: { type: string }, example: dsa/algorithms }
+      responses:
+        "200":
+          description: Category view
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CategoryView" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /v1/public/tags:
+    get:
+      tags: [taxonomy]
+      operationId: listTags
+      summary: Tags of one kind, alphabetically (keyset-paginated).
+      security: []
+      parameters:
+        - { name: kind, in: query, required: true, schema: { $ref: "#/components/schemas/TagKind" } }
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200":
+          description: Page of tags
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TagPage" }
+        "400": { $ref: "#/components/responses/Problem" }
+  /v1/public/tags/search:
+    get:
+      tags: [taxonomy]
+      operationId: searchTags
+      summary: Typo-tolerant tag autocomplete (top 20).
+      security: []
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string, minLength: 2 } }
+        - { name: kind, in: query, schema: { $ref: "#/components/schemas/TagKind" } }
+      responses:
+        "200":
+          description: Matching tags, best first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/Tag" } }
+        "400": { $ref: "#/components/responses/Problem" }
+  /v1/public/tags/{kind}/{slug}:
+    get:
+      tags: [taxonomy]
+      operationId: getTag
+      summary: One tag, for its listing page header.
+      security: []
+      parameters:
+        - { name: kind, in: path, required: true, schema: { $ref: "#/components/schemas/TagKind" } }
+        - { name: slug, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Tag
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Tag" }
+        "404": { $ref: "#/components/responses/Problem" }
+
+  /v1/admin/categories:
+    post:
+      tags: [taxonomy]
+      operationId: createCategory
+      summary: Create a category. Top-level needs ADMIN; a child needs EDITOR on the parent.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateCategory" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Category" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /v1/admin/categories/{id}:
+    parameters:
+      - { $ref: "#/components/parameters/ID" }
+    patch:
+      tags: [taxonomy]
+      operationId: updateCategory
+      summary: Edit name, description, SEO overrides and position (EDITOR on the category).
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateCategory" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Category" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+    delete:
+      tags: [taxonomy]
+      operationId: deleteCategory
+      summary: Delete an empty category (no children, no content).
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Deleted }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /v1/admin/categories/{id}/move:
+    parameters:
+      - { $ref: "#/components/parameters/ID" }
+    post:
+      tags: [taxonomy]
+      operationId: moveCategory
+      summary: Re-parent and/or rename; the whole subtree moves atomically.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MoveCategory" }
+      responses:
+        "200":
+          description: Moved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Category" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /v1/admin/tags:
+    post:
+      tags: [taxonomy]
+      operationId: createTag
+      summary: Create a tag (EDITOR).
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateTag" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Tag" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /v1/admin/tags/{id}:
+    parameters:
+      - { $ref: "#/components/parameters/ID" }
+    patch:
+      tags: [taxonomy]
+      operationId: updateTag
+      summary: Rename or re-describe a tag (EDITOR). Slug and kind are fixed.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateTag" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Tag" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+    delete:
+      tags: [taxonomy]
+      operationId: deleteTag
+      summary: Delete a tag and detach it from all content (ADMIN).
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Deleted }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -77,6 +293,22 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: Access token from the shared auth service (audience `code-sprout-cms`).
+
+  parameters:
+    ID:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer, format: int64, minimum: 1 }
+    Cursor:
+      name: cursor
+      in: query
+      description: Opaque cursor from a previous page's `nextCursor`. Omit for the first page.
+      schema: { type: string }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
 
   responses:
     Problem:
@@ -133,3 +365,91 @@ components:
           items: { $ref: "#/components/schemas/RoleGrant" }
         isAdmin: { type: boolean, description: "Auth ROLE_ADMIN, which grants every CMS permission." }
         isGuest: { type: boolean, description: "Guest account: may read and react, cannot author." }
+
+    Category:
+      type: object
+      required: [id, parentId, path, slug, name, description, position, seo, updatedAt]
+      properties:
+        id: { type: integer, format: int64 }
+        parentId: { type: [integer, "null"], format: int64 }
+        path: { type: string, description: "Slash-separated slug path, e.g. dsa/algorithms." }
+        slug: { type: string }
+        name: { type: string }
+        description: { type: [string, "null"] }
+        position: { type: number, description: Sibling order (ascending). }
+        seo: { type: object, description: Meta title/description overrides. }
+        updatedAt: { type: string, format: date-time }
+    CategoryView:
+      allOf:
+        - $ref: "#/components/schemas/Category"
+        - type: object
+          required: [ancestors, children]
+          properties:
+            ancestors:
+              description: Root-first breadcrumb, excluding this category.
+              type: array
+              items: { $ref: "#/components/schemas/Category" }
+            children:
+              type: array
+              items: { $ref: "#/components/schemas/Category" }
+    CreateCategory:
+      type: object
+      required: [slug, name]
+      additionalProperties: false
+      properties:
+        parentId: { type: [integer, "null"], format: int64, description: Omit for a top-level section. }
+        slug: { type: string, pattern: "^[a-z0-9]+(-[a-z0-9]+)*$", maxLength: 80 }
+        name: { type: string, maxLength: 120 }
+        description: { type: [string, "null"] }
+        position: { type: number, description: Omit to append after the last sibling. }
+    UpdateCategory:
+      type: object
+      required: [name, position]
+      additionalProperties: false
+      properties:
+        name: { type: string, maxLength: 120 }
+        description: { type: [string, "null"] }
+        seo: { type: object }
+        position: { type: number }
+    MoveCategory:
+      type: object
+      required: [slug]
+      additionalProperties: false
+      properties:
+        parentId: { type: [integer, "null"], format: int64, description: null makes it top-level (ADMIN). }
+        slug: { type: string, pattern: "^[a-z0-9]+(-[a-z0-9]+)*$", maxLength: 80 }
+
+    TagKind:
+      type: string
+      enum: [TOPIC, COMPANY, LANGUAGE, PATTERN]
+    Tag:
+      type: object
+      required: [id, kind, slug, name, description]
+      properties:
+        id: { type: integer, format: int64 }
+        kind: { $ref: "#/components/schemas/TagKind" }
+        slug: { type: string }
+        name: { type: string }
+        description: { type: [string, "null"] }
+    TagPage:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/Tag" } }
+        nextCursor: { type: [string, "null"], description: Pass as `cursor` for the next page; null on the last. }
+    CreateTag:
+      type: object
+      required: [kind, slug, name]
+      additionalProperties: false
+      properties:
+        kind: { $ref: "#/components/schemas/TagKind" }
+        slug: { type: string, pattern: "^[a-z0-9]+(-[a-z0-9]+)*$", maxLength: 80 }
+        name: { type: string, maxLength: 120 }
+        description: { type: [string, "null"] }
+    UpdateTag:
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        name: { type: string, maxLength: 120 }
+        description: { type: [string, "null"] }

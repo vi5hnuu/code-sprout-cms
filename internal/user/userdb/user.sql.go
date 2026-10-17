@@ -57,10 +57,15 @@ ON CONFLICT (auth_sub) DO NOTHING
 RETURNING id
 `
 
+type InsertUserParams struct {
+	AuthSub     string
+	DisplayName string
+}
+
 // Concurrent first requests from the same user race here; DO NOTHING plus a re-read in the
 // service resolves it without a write on every request (an upsert would rewrite the row).
-func (q *Queries) InsertUser(ctx context.Context, authSub string, displayName string) (int64, error) {
-	row := q.db.QueryRow(ctx, insertUser, authSub, displayName)
+func (q *Queries) InsertUser(ctx context.Context, arg InsertUserParams) (int64, error) {
+	row := q.db.QueryRow(ctx, insertUser, arg.AuthSub, arg.DisplayName)
 	var id int64
 	err := row.Scan(&id)
 	return id, err

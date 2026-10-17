@@ -61,8 +61,14 @@ const insertEvent = `-- name: InsertEvent :exec
 INSERT INTO outbox (topic, aggregate_id, payload) VALUES ($1, $2, $3)
 `
 
-func (q *Queries) InsertEvent(ctx context.Context, topic string, aggregateID int64, payload []byte) error {
-	_, err := q.db.Exec(ctx, insertEvent, topic, aggregateID, payload)
+type InsertEventParams struct {
+	Topic       string
+	AggregateID int64
+	Payload     []byte
+}
+
+func (q *Queries) InsertEvent(ctx context.Context, arg InsertEventParams) error {
+	_, err := q.db.Exec(ctx, insertEvent, arg.Topic, arg.AggregateID, arg.Payload)
 	return err
 }
 
@@ -72,12 +78,19 @@ SET attempts = attempts + 1, last_error = $3, available_at = $4
 WHERE created_at = $1 AND id = $2
 `
 
-func (q *Queries) MarkFailed(ctx context.Context, createdAt time.Time, iD int64, lastError *string, availableAt time.Time) error {
+type MarkFailedParams struct {
+	CreatedAt   time.Time
+	ID          int64
+	LastError   *string
+	AvailableAt time.Time
+}
+
+func (q *Queries) MarkFailed(ctx context.Context, arg MarkFailedParams) error {
 	_, err := q.db.Exec(ctx, markFailed,
-		createdAt,
-		iD,
-		lastError,
-		availableAt,
+		arg.CreatedAt,
+		arg.ID,
+		arg.LastError,
+		arg.AvailableAt,
 	)
 	return err
 }
@@ -87,7 +100,12 @@ UPDATE outbox SET processed_at = now()
 WHERE created_at = $1 AND id = $2
 `
 
-func (q *Queries) MarkProcessed(ctx context.Context, createdAt time.Time, iD int64) error {
-	_, err := q.db.Exec(ctx, markProcessed, createdAt, iD)
+type MarkProcessedParams struct {
+	CreatedAt time.Time
+	ID        int64
+}
+
+func (q *Queries) MarkProcessed(ctx context.Context, arg MarkProcessedParams) error {
+	_, err := q.db.Exec(ctx, markProcessed, arg.CreatedAt, arg.ID)
 	return err
 }

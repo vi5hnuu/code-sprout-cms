@@ -20,7 +20,20 @@ const (
 	TopicContentPublished   = "content.published"   // ContentEvent
 	TopicContentUnpublished = "content.unpublished" // ContentEvent
 	TopicContentUpdated     = "content.updated"     // ContentEvent: live content re-published
+	TopicCategoryChanged    = "category.changed"    // CategoryEvent: created, edited, moved or deleted
+	TopicTagChanged         = "tag.changed"         // TagEvent
 )
+
+// CategoryEvent carries the affected paths: a move invalidates pages under both the old and
+// the new location.
+type CategoryEvent struct {
+	Paths []string `json:"paths"`
+}
+
+type TagEvent struct {
+	Kind string `json:"kind"`
+	Slug string `json:"slug"`
+}
 
 // ContentEvent is deliberately small: handlers re-read current state instead of trusting a
 // snapshot, so out-of-order or repeated delivery still converges to the right result.
@@ -36,5 +49,5 @@ func Publish(ctx context.Context, db outboxdb.DBTX, topic string, aggregateID in
 	if err != nil {
 		return fmt.Errorf("outbox %s: marshal: %w", topic, err)
 	}
-	return outboxdb.New(db).InsertEvent(ctx, topic, aggregateID, body)
+	return outboxdb.New(db).InsertEvent(ctx, outboxdb.InsertEventParams{Topic: topic, AggregateID: aggregateID, Payload: body})
 }

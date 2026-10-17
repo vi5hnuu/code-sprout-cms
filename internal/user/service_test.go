@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"code-sprout-cms/internal/access"
 	"code-sprout-cms/internal/platform/apperr"
 	"code-sprout-cms/internal/platform/testenv"
 )
@@ -70,7 +71,7 @@ func TestProfile(t *testing.T) {
 	if p.DisplayName != "Sprout reader" {
 		t.Fatalf("blank name should fall back, got %q", p.DisplayName)
 	}
-	if len(p.Roles) != 1 || p.Roles[0].Role != RoleEditor || p.Roles[0].ScopeCategoryID != nil {
+	if len(p.Roles) != 1 || p.Roles[0].Role != access.RoleEditor || p.Roles[0].ScopeCategoryID != nil {
 		t.Fatalf("roles = %+v", p.Roles)
 	}
 
