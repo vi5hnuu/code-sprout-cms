@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"time"
 	"unicode/utf8"
 
 	"code-sprout-cms/internal/content"
@@ -48,6 +49,25 @@ func (ix *Indexer) Register(d *outbox.Dispatcher) {
 	d.On(outbox.TopicContentUpdated, sync)
 	d.On(outbox.TopicContentUnpublished, sync)
 	d.On(outbox.TopicSearchReindex, ix.reindexChunk)
+}
+
+// EnsureSettings applies the index settings (filterable and searchable attributes) when the
+// worker starts, retrying with backoff until search is reachable. Without them a fresh index
+// rejects every filtered query; applying identical settings again is a no-op for the engine.
+func (ix *Indexer) EnsureSettings(ctx context.Context) {
+	for attempt := int32(1); ; attempt++ {
+		err := ix.index.Configure(ctx)
+		if err == nil {
+			return
+		}
+		wait := outbox.Backoff(attempt)
+		slog.Warn("search settings not applied; retrying", "err", err, "in", wait)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(wait):
+		}
+	}
 }
 
 // Sync makes the index match the database for these items: live public ones are upserted, all

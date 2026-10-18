@@ -77,7 +77,8 @@ func run() error {
 	enqueue := func(ctx context.Context, topic string, id int64, payload any) error {
 		return outbox.Publish(ctx, database.Primary, topic, id, payload)
 	}
-	search.NewIndexer(search.NewMeili(cfg.Search.URL, cfg.Search.APIKey, cfg.Search.Index), reader, problems, enqueue).Register(dispatcher)
+	indexer := search.NewIndexer(search.NewMeili(cfg.Search.URL, cfg.Search.APIKey, cfg.Search.Index), reader, problems, enqueue)
+	indexer.Register(dispatcher)
 	dc := cfg.Delivery
 	delivery.NewService(delivery.Config{
 		RevalidateURL: dc.RevalidateURL, RevalidateSecret: dc.RevalidateSecret,
@@ -87,6 +88,9 @@ func run() error {
 
 	var wg sync.WaitGroup
 	wg.Go(func() { dispatcher.Run(ctx) })
+	if cfg.Search.URL != "" {
+		wg.Go(func() { indexer.EnsureSettings(ctx) })
+	}
 	wg.Go(func() { maintenance.KeepPartitionsAhead(ctx, database.Primary) })
 	wg.Go(func() { assets.RunVerifier(ctx, 5*time.Second) })
 	wg.Go(func() { contents.RunScheduler(ctx, 30*time.Second) })
