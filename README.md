@@ -62,6 +62,7 @@ make storage-init                         # buckets sprout-public (anonymous rea
 make migrate
 make run-api                              # http://localhost:9300
 make run-worker
+make seed                                 # optional: sample sections, articles, blog posts, problems
 ```
 
 ## Everyday commands
@@ -72,6 +73,7 @@ make run-worker
 | `make generate` | Regenerates sqlc code after editing `db/queries/*.sql` or migrations |
 | `make migration name=add_x` | New goose migration file |
 | `make lint lint-api` | `go vet` and the OpenAPI lint |
+| `make seed` | Sample content through the real services (local databases only; safe to re-run). `go run ./cmd/seed -check` validates the sample bodies without a database |
 
 ## Conventions
 

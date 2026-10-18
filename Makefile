@@ -10,7 +10,7 @@ endif
 DATABASE_URL ?= postgres://sprout:sprout@localhost:5442/sprout?sslmode=disable
 MIGRATIONS   := db/migrations
 
-.PHONY: build api worker run-api run-worker test test-db lint lint-api generate \
+.PHONY: build api worker run-api run-worker seed test test-db lint lint-api generate \
         infra-up infra-down storage-init migrate migrate-down migrate-status migration
 
 build: api worker
@@ -28,6 +28,11 @@ run-api:
 
 run-worker:
 	go run ./cmd/worker
+
+# Sample content for local development (refuses non-local databases). Keep the worker running
+# so search and sitemaps pick the items up. Safe to re-run.
+seed:
+	go run ./cmd/seed
 
 # Integration tests run against a separate database so they never touch dev data.
 TEST_DATABASE_URL ?= postgres://sprout:sprout@localhost:5442/sprout_test?sslmode=disable
