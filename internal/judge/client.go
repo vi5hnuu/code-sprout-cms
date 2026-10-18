@@ -136,7 +136,8 @@ func (c *Client) ExecuteBatch(ctx context.Context, reqs []ExecuteRequest, idempo
 			Error string `json:"error"`
 		} `json:"errors"`
 	}
-	if err := c.do(ctx, http.MethodPost, "/batch/execute", map[string]any{"jobs": reqs}, idempotencyKey, &out); err != nil {
+	// ls-judge takes the jobs as a bare JSON array and answers {accepted, errors} by index.
+	if err := c.do(ctx, http.MethodPost, "/batch/execute", reqs, idempotencyKey, &out); err != nil {
 		return nil, err
 	}
 	if len(out.Errors) > 0 {

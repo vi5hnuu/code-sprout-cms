@@ -36,11 +36,15 @@ func fakeServer(t *testing.T) (*httptest.Server, *[]string) {
 		}
 	})
 	mux.HandleFunc("POST /batch/execute", func(w http.ResponseWriter, r *http.Request) {
-		var body struct{ Jobs []ExecuteRequest }
-		_ = json.NewDecoder(r.Body).Decode(&body)
+		// Same contract as ls-judge's handleBatchExecute: the body is a bare array of jobs.
+		var jobs []ExecuteRequest
+		if err := json.NewDecoder(r.Body).Decode(&jobs); err != nil {
+			writeErr(w, 400, "invalid_request", "body must be a JSON array of jobs")
+			return
+		}
 		w.WriteHeader(http.StatusMultiStatus)
 		resp := map[string]any{"accepted": []map[string]any{}, "errors": []map[string]any{}}
-		for i, j := range body.Jobs {
+		for i, j := range jobs {
 			if j.Language == "cobol" {
 				resp["errors"] = append(resp["errors"].([]map[string]any), map[string]any{"index": i, "error": "unknown language"})
 				continue
