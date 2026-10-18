@@ -24,13 +24,15 @@ type RoleGrant struct {
 }
 
 type Profile struct {
-	ID           int64       `json:"id"`
-	Handle       *string     `json:"handle"`
-	DisplayName  string      `json:"displayName"`
-	Bio          *string     `json:"bio"`
-	AvatarFileID *int64      `json:"avatarFileId"`
-	CreatedAt    time.Time   `json:"createdAt"`
-	Roles        []RoleGrant `json:"roles"`
+	ID           int64   `json:"id"`
+	Handle       *string `json:"handle"`
+	DisplayName  string  `json:"displayName"`
+	Bio          *string `json:"bio"`
+	AvatarFileID *int64  `json:"avatarFileId"`
+	// AvatarURL is the picture's public address, so clients never look the file up themselves.
+	AvatarURL *string     `json:"avatarUrl"`
+	CreatedAt time.Time   `json:"createdAt"`
+	Roles     []RoleGrant `json:"roles"`
 }
 
 type Service struct {
@@ -87,12 +89,21 @@ func (s *Service) Profile(ctx context.Context, id int64) (Profile, error) {
 	for i, g := range grants {
 		roles[i] = RoleGrant{Role: access.Role(g.Role), ScopeCategoryID: g.ScopeCategoryID}
 	}
+	var avatarURL *string
+	if u.AvatarFileID != nil {
+		files, err := s.files.Describe(ctx, []int64{*u.AvatarFileID})
+		if err != nil {
+			return Profile{}, err
+		}
+		avatarURL = files[*u.AvatarFileID].URL
+	}
 	return Profile{
 		ID:           u.ID,
 		Handle:       u.Handle,
 		DisplayName:  u.DisplayName,
 		Bio:          u.Bio,
 		AvatarFileID: u.AvatarFileID,
+		AvatarURL:    avatarURL,
 		CreatedAt:    u.CreatedAt,
 		Roles:        roles,
 	}, nil
