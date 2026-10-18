@@ -16,6 +16,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"code-sprout-cms/internal/auth"
+	"code-sprout-cms/internal/content"
 	"code-sprout-cms/internal/judge"
 	"code-sprout-cms/internal/platform/apperr"
 	"code-sprout-cms/internal/platform/db"
@@ -38,9 +39,11 @@ type Problems interface {
 	OpenTestSet(ctx context.Context, ref problem.TestSetRef) (io.ReadCloser, error)
 }
 
-// ContentGate tells which items are live (implemented by content.Reader).
+// ContentGate tells which items are live, and names them for listings (implemented by
+// content.Reader).
 type ContentGate interface {
 	LiveIDs(ctx context.Context, ids []int64) ([]int64, error)
+	ItemsByID(ctx context.Context, ids []int64) ([]content.ListItem, error)
 }
 
 // ProblemDifficulties resolves difficulty for solved-problem stats.
@@ -88,6 +91,13 @@ type Submission struct {
 	Message     *string        `json:"message,omitempty"`     // compiler output etc.
 	CreatedAt   time.Time      `json:"createdAt"`
 	FinishedAt  *time.Time     `json:"finishedAt"`
+	// Problem names the problem in listings (nil if it is no longer live).
+	Problem *ProblemRef `json:"problem,omitempty"`
+}
+
+type ProblemRef struct {
+	Slug  string `json:"slug"`
+	Title string `json:"title"`
 }
 
 func fromRow(r submissiondb.Submission, withCode bool) Submission {
@@ -194,7 +204,34 @@ func (s *Service) List(ctx context.Context, p auth.Principal, problemID *int64, 
 			Passed: r.Passed, Total: r.Total, TimeMs: r.TimeMs, CreatedAt: r.CreatedAt, FinishedAt: r.FinishedAt,
 		}, false)
 	}
+	if err := s.nameProblems(ctx, out); err != nil {
+		return page.Page[Submission]{}, err
+	}
 	return page.Build(out, req.Limit, func(s Submission) SubmissionCursor { return SubmissionCursor{At: s.CreatedAt, ID: s.ID} }), nil
+}
+
+// nameProblems attaches each submission's problem title and slug: one batched lookup per page.
+func (s *Service) nameProblems(ctx context.Context, subs []Submission) error {
+	seen := make(map[int64]bool, len(subs))
+	ids := make([]int64, 0, len(subs))
+	for _, sub := range subs {
+		if !seen[sub.ProblemID] {
+			seen[sub.ProblemID] = true
+			ids = append(ids, sub.ProblemID)
+		}
+	}
+	items, err := s.content.ItemsByID(ctx, ids)
+	if err != nil {
+		return err
+	}
+	refs := make(map[int64]*ProblemRef, len(items))
+	for _, it := range items {
+		refs[it.ID] = &ProblemRef{Slug: it.Slug, Title: it.Title}
+	}
+	for i := range subs {
+		subs[i].Problem = refs[subs[i].ProblemID]
+	}
+	return nil
 }
 
 type ProblemState struct {

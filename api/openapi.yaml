@@ -2787,6 +2787,13 @@ components:
         message: { type: string, description: Compiler output or why it could not be judged. }
         createdAt: { type: string, format: date-time }
         finishedAt: { type: [string, "null"], format: date-time }
+        problem:
+          type: object
+          description: The problem's title and slug, in listings (absent when it is no longer live).
+          required: [slug, title]
+          properties:
+            slug: { type: string }
+            title: { type: string }
     UserStats:
       type: object
       required: [totalSolved, easySolved, mediumSolved, hardSolved, totalSubmissions, currentStreak, longestStreak, activity, languageBreakdown]
