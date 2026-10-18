@@ -98,6 +98,19 @@ paths:
               schema: { $ref: "#/components/schemas/Me" }
         "401": { $ref: "#/components/responses/Problem" }
         "429": { $ref: "#/components/responses/Problem" }
+    delete:
+      tags: [me]
+      operationId: eraseMe
+      summary: Erase the caller's account data.
+      description: >
+        Deletes likes, saves, lists, notes, submissions, progress, review schedule and role grants,
+        empties the caller's comments and anonymises the profile, in one transaction. Pages the
+        caller authored stay, credited to "Former member". Clients then delete the auth account
+        (auth DELETE /api/v1/user/me) and sign out.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Erased }
+        "401": { $ref: "#/components/responses/Problem" }
 
   /v1/public/categories:
     get:
@@ -1416,6 +1429,26 @@ paths:
               schema: { $ref: "#/components/schemas/ProblemListItem" }
         "404": { $ref: "#/components/responses/Problem" }
 
+  /v1/public/random-problem:
+    get:
+      tags: [problems]
+      operationId: getRandomProblem
+      summary: A random listed problem, optionally by difficulty and tag.
+      security: []
+      parameters:
+        - { name: difficulty, in: query, schema: { $ref: "#/components/schemas/Difficulty" } }
+        - { name: tag, in: query, description: "kind:slug", schema: { type: string }, example: "company:google" }
+      responses:
+        "200":
+          description: Problem
+          headers:
+            Cache-Control: { schema: { type: string }, description: "no-store: every call picks again." }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProblemListItem" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+
   /v1/run:
     post:
       tags: [judging]
@@ -1616,6 +1649,41 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/UserStats" }
         "401": { $ref: "#/components/responses/Problem" }
+
+  /v1/me/reviews:
+    get:
+      tags: [judging]
+      operationId: listMyReviews
+      summary: Problems scheduled for spaced review, due now or coming up.
+      description: >
+        Accepted submissions schedule their problem at 1, 3, 7, 14, 30 and 60 days; solving it
+        again on time advances it, a miss steps it back. Due reviews come oldest first.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: when, in: query, schema: { type: string, enum: [due, upcoming], default: due } }
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200":
+          description: Reviews
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReviewPage" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+
+  /v1/me/reviews/{problemId}:
+    delete:
+      tags: [judging]
+      operationId: dismissReview
+      summary: Stop reviewing a problem.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: problemId, in: path, required: true, schema: { type: integer, format: int64, minimum: 1 } }
+      responses:
+        "204": { description: Dismissed }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
 
   /v1/me/notes:
     get:
@@ -2111,13 +2179,14 @@ components:
 
     Me:
       type: object
-      required: [id, handle, displayName, bio, avatarFileId, createdAt, roles, isAdmin, isGuest]
+      required: [id, handle, displayName, bio, avatarFileId, avatarUrl, createdAt, roles, isAdmin, isGuest]
       properties:
         id: { type: integer, format: int64 }
         handle: { type: [string, "null"], description: "Public profile handle, used in /u/{handle}." }
         displayName: { type: string }
         bio: { type: [string, "null"] }
         avatarFileId: { type: [integer, "null"], format: int64 }
+        avatarUrl: { type: [string, "null"], description: "Public URL of the avatar picture." }
         createdAt: { type: string, format: date-time }
         roles:
           type: array
@@ -2767,6 +2836,25 @@ components:
               stdout: { type: [string, "null"] }
               stderr: { type: [string, "null"] }
               timeMs: { type: [integer, "null"] }
+        message: { type: string, description: "Why a failed run has no results." }
+    ReviewItem:
+      type: object
+      required: [problem, difficulty, step, steps, dueAt]
+      properties:
+        problem: { $ref: "#/components/schemas/ListItem" }
+        difficulty: { $ref: "#/components/schemas/Difficulty" }
+        step: { type: integer, description: "Intervals passed so far (0 = first review)." }
+        steps: { type: integer, description: "How many intervals there are in all." }
+        dueAt: { type: string, format: date-time }
+    ReviewPage:
+      type: object
+      required: [items, nextCursor, dueCount]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ReviewItem" }
+        nextCursor: { type: [string, "null"] }
+        dueCount: { type: integer, format: int64, description: "Reviews due now in total." }
     Submission:
       type: object
       required: [id, problemId, language, status, verdict, passed, total, timeMs, createdAt, finishedAt]
