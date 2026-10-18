@@ -670,6 +670,38 @@ func (q *Queries) ListAuthorContent(ctx context.Context, arg ListAuthorContentPa
 	return items, nil
 }
 
+const listBlogCovers = `-- name: ListBlogCovers :many
+SELECT content_id, cover_file_id::bigint AS cover_file_id
+FROM blog_ext
+WHERE content_id = ANY ($1::bigint[]) AND cover_file_id IS NOT NULL
+`
+
+type ListBlogCoversRow struct {
+	ContentID   int64
+	CoverFileID int64
+}
+
+// Live covers for a page of listing items (blog_ext is written at publish).
+func (q *Queries) ListBlogCovers(ctx context.Context, ids []int64) ([]ListBlogCoversRow, error) {
+	rows, err := q.db.Query(ctx, listBlogCovers, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListBlogCoversRow{}
+	for rows.Next() {
+		var i ListBlogCoversRow
+		if err := rows.Scan(&i.ContentID, &i.CoverFileID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listContentAssetIDs = `-- name: ListContentAssetIDs :many
 SELECT file_id FROM content_asset WHERE content_id = $1
 `

@@ -211,6 +211,7 @@ type ListItem struct {
 	Category        *taxonomy.Category `json:"category"`
 	Author          user.PublicUser    `json:"author"`
 	Stats           engagement.Stats   `json:"stats"`
+	Cover           *asset.File        `json:"cover"` // blog cover image, for card layouts
 }
 
 type PublishedCursor struct {
@@ -336,13 +337,17 @@ func (r *Reader) hydrateList(ctx context.Context, q *contentdb.Queries, rows []c
 	for _, rr := range renders {
 		reading[rr.ContentID] = rr.ReadingMinutes
 	}
+	covers, err := r.listCovers(ctx, q, rows)
+	if err != nil {
+		return nil, err
+	}
 
 	items := make([]ListItem, len(rows))
 	for i, c := range rows {
 		item := ListItem{
 			ID: c.ID, Type: Type(c.Type), Locale: c.Locale, Slug: c.Slug, Title: c.Title, Summary: c.Summary,
 			Access: c.Access, PublishedAt: *c.PublishedAt, LastPublishedAt: *c.LastPublishedAt,
-			ReadingMinutes: reading[c.ID], Author: authors[c.AuthorID], Stats: stats[c.ID],
+			ReadingMinutes: reading[c.ID], Author: authors[c.AuthorID], Stats: stats[c.ID], Cover: covers[c.ID],
 		}
 		if c.PrimaryCategoryID != nil {
 			if cat, ok := cats[*c.PrimaryCategoryID]; ok {
@@ -352,6 +357,39 @@ func (r *Reader) hydrateList(ctx context.Context, q *contentdb.Queries, rows []c
 		items[i] = item
 	}
 	return items, nil
+}
+
+// listCovers resolves blog covers for a page of rows: two batched queries whatever the page
+// size, and none when the page holds no blog posts.
+func (r *Reader) listCovers(ctx context.Context, q *contentdb.Queries, rows []contentdb.Content) (map[int64]*asset.File, error) {
+	var blogIDs []int64
+	for _, c := range rows {
+		if Type(c.Type) == TypeBlog {
+			blogIDs = append(blogIDs, c.ID)
+		}
+	}
+	if len(blogIDs) == 0 {
+		return nil, nil
+	}
+	refs, err := q.ListBlogCovers(ctx, blogIDs)
+	if err != nil {
+		return nil, err
+	}
+	fileIDs := make([]int64, len(refs))
+	for i, ref := range refs {
+		fileIDs[i] = ref.CoverFileID
+	}
+	files, err := r.assets.Describe(ctx, fileIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[int64]*asset.File, len(refs))
+	for _, ref := range refs {
+		if f, ok := files[ref.CoverFileID]; ok {
+			out[ref.ContentID] = &f
+		}
+	}
+	return out, nil
 }
 
 // LiveIDs returns which of ids are live and visible, for domains that only act on live

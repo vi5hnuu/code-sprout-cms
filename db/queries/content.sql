@@ -271,6 +271,12 @@ SELECT * FROM article_ext WHERE content_id = $1;
 -- name: GetBlogExt :one
 SELECT * FROM blog_ext WHERE content_id = $1;
 
+-- Live covers for a page of listing items (blog_ext is written at publish).
+-- name: ListBlogCovers :many
+SELECT content_id, cover_file_id::bigint AS cover_file_id
+FROM blog_ext
+WHERE content_id = ANY (sqlc.arg(ids)::bigint[]) AND cover_file_id IS NOT NULL;
+
 -- Live items among ids (UNLISTED included: readers can like a page they reached by URL).
 -- name: ListLiveByIDs :many
 SELECT * FROM content

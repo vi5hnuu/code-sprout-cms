@@ -2549,7 +2549,7 @@ components:
         stats: { $ref: "#/components/schemas/Stats" }
     ListItem:
       type: object
-      required: [id, type, locale, slug, title, summary, access, publishedAt, lastPublishedAt, readingMinutes, category, author, stats]
+      required: [id, type, locale, slug, title, summary, access, publishedAt, lastPublishedAt, readingMinutes, category, author, stats, cover]
       properties:
         id: { type: integer, format: int64 }
         type: { $ref: "#/components/schemas/ContentType" }
@@ -2567,6 +2567,11 @@ components:
             - $ref: "#/components/schemas/Category"
         author: { $ref: "#/components/schemas/PublicUser" }
         stats: { $ref: "#/components/schemas/Stats" }
+        cover:
+          description: The blog post's cover image; null for other types or without a cover.
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/File"
     ListItemPage:
       type: object
       required: [items, nextCursor]
