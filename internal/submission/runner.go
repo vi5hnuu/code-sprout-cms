@@ -268,6 +268,9 @@ func (s *Service) finish(ctx context.Context, sub submissiondb.Submission, out o
 		if err := q.UpsertUserProblem(ctx, submissiondb.UpsertUserProblemParams{UserID: sub.UserID, ProblemID: sub.ProblemID, Solved: accepted}); err != nil {
 			return err
 		}
+		if err := scheduleReview(ctx, q, sub.UserID, sub.ProblemID, accepted, time.Now()); err != nil {
+			return err
+		}
 		var a int32
 		if accepted {
 			a = 1

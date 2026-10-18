@@ -100,3 +100,44 @@ DELETE FROM user_problem WHERE user_id = $1;
 
 -- name: DeleteUserActivity :exec
 DELETE FROM user_activity_day WHERE user_id = $1;
+
+-- name: DeleteUserReviews :exec
+DELETE FROM user_review WHERE user_id = $1;
+
+-- Spaced review (internal/submission/review.go).
+
+-- name: GetReviewForUpdate :one
+SELECT state, step, due_at FROM user_review
+WHERE user_id = sqlc.arg(user_id) AND problem_id = sqlc.arg(problem_id)
+FOR UPDATE;
+
+-- name: UpsertReview :exec
+INSERT INTO user_review (user_id, problem_id, state, step, due_at, last_result_at)
+VALUES (sqlc.arg(user_id), sqlc.arg(problem_id), sqlc.arg(state), sqlc.arg(step), sqlc.arg(due_at), now())
+ON CONFLICT (user_id, problem_id)
+DO UPDATE SET state = EXCLUDED.state, step = EXCLUDED.step, due_at = EXCLUDED.due_at, last_result_at = now();
+
+-- name: DismissReview :execrows
+UPDATE user_review SET state = 'DISMISSED'
+WHERE user_id = sqlc.arg(user_id) AND problem_id = sqlc.arg(problem_id) AND state = 'ACTIVE';
+
+-- Reviews due now, oldest first; keyset paged on (due_at, problem_id). Two queries rather than
+-- one with a flag, so each is a plain range scan of idx_user_review_due.
+-- name: ListDueReviews :many
+SELECT problem_id, step, due_at FROM user_review
+WHERE user_id = sqlc.arg(user_id) AND state = 'ACTIVE' AND due_at <= now()
+  AND (sqlc.narg(after_due)::timestamptz IS NULL
+       OR (due_at, problem_id) > (sqlc.narg(after_due)::timestamptz, sqlc.narg(after_id)::bigint))
+ORDER BY due_at, problem_id
+LIMIT sqlc.arg(lim);
+
+-- name: ListUpcomingReviews :many
+SELECT problem_id, step, due_at FROM user_review
+WHERE user_id = sqlc.arg(user_id) AND state = 'ACTIVE' AND due_at > now()
+  AND (sqlc.narg(after_due)::timestamptz IS NULL
+       OR (due_at, problem_id) > (sqlc.narg(after_due)::timestamptz, sqlc.narg(after_id)::bigint))
+ORDER BY due_at, problem_id
+LIMIT sqlc.arg(lim);
+
+-- name: CountDueReviews :one
+SELECT count(*) FROM user_review WHERE user_id = $1 AND state = 'ACTIVE' AND due_at <= now();

@@ -40,6 +40,40 @@ func (h *Handler) Routes(mux *http.ServeMux, authed func(http.Handler) http.Hand
 	me("GET /v1/me/problem-state", h.states)
 	me("GET /v1/me/solved", h.solved)
 	me("GET /v1/me/stats", h.stats)
+	me("GET /v1/me/reviews", h.reviews)
+	me("DELETE /v1/me/reviews/{problemId}", h.dismissReview)
+}
+
+// reviews: ?when=due (default) or upcoming, keyset paged.
+func (h *Handler) reviews(w http.ResponseWriter, r *http.Request) error {
+	req, err := page.Parse[ReviewCursor](r)
+	if err != nil {
+		return err
+	}
+	when := r.URL.Query().Get("when")
+	if when != "" && when != "due" && when != "upcoming" {
+		return apperr.ValidationFailed(map[string]string{"when": "when must be due or upcoming."})
+	}
+	res, err := h.svc.Reviews(r.Context(), principal(r), when != "upcoming", req)
+	if err != nil {
+		return err
+	}
+	noStore(w)
+	httpx.JSON(w, http.StatusOK, res)
+	return nil
+}
+
+func (h *Handler) dismissReview(w http.ResponseWriter, r *http.Request) error {
+	id, err := strconv.ParseInt(r.PathValue("problemId"), 10, 64)
+	if err != nil || id <= 0 {
+		return apperr.NotFound("review.not_found", "That problem is not scheduled for review.")
+	}
+	if err := h.svc.DismissReview(r.Context(), principal(r), id); err != nil {
+		return err
+	}
+	noStore(w)
+	w.WriteHeader(http.StatusNoContent)
+	return nil
 }
 
 // owner is who a run belongs to: the signed-in user, else the client address.

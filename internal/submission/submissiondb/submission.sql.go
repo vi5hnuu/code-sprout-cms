@@ -93,6 +93,17 @@ func (q *Queries) AddActivity(ctx context.Context, arg AddActivityParams) error 
 	return err
 }
 
+const countDueReviews = `-- name: CountDueReviews :one
+SELECT count(*) FROM user_review WHERE user_id = $1 AND state = 'ACTIVE' AND due_at <= now()
+`
+
+func (q *Queries) CountDueReviews(ctx context.Context, userID int64) (int64, error) {
+	row := q.db.QueryRow(ctx, countDueReviews, userID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countUserSubmissions = `-- name: CountUserSubmissions :one
 SELECT count(*) FROM submission WHERE user_id = $1
 `
@@ -122,6 +133,15 @@ func (q *Queries) DeleteUserProblems(ctx context.Context, userID int64) error {
 	return err
 }
 
+const deleteUserReviews = `-- name: DeleteUserReviews :exec
+DELETE FROM user_review WHERE user_id = $1
+`
+
+func (q *Queries) DeleteUserReviews(ctx context.Context, userID int64) error {
+	_, err := q.db.Exec(ctx, deleteUserReviews, userID)
+	return err
+}
+
 const deleteUserSubmissions = `-- name: DeleteUserSubmissions :exec
 
 DELETE FROM submission WHERE user_id = $1
@@ -131,6 +151,24 @@ DELETE FROM submission WHERE user_id = $1
 func (q *Queries) DeleteUserSubmissions(ctx context.Context, userID int64) error {
 	_, err := q.db.Exec(ctx, deleteUserSubmissions, userID)
 	return err
+}
+
+const dismissReview = `-- name: DismissReview :execrows
+UPDATE user_review SET state = 'DISMISSED'
+WHERE user_id = $1 AND problem_id = $2 AND state = 'ACTIVE'
+`
+
+type DismissReviewParams struct {
+	UserID    int64
+	ProblemID int64
+}
+
+func (q *Queries) DismissReview(ctx context.Context, arg DismissReviewParams) (int64, error) {
+	result, err := q.db.Exec(ctx, dismissReview, arg.UserID, arg.ProblemID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const finishSubmission = `-- name: FinishSubmission :execrows
@@ -170,6 +208,32 @@ func (q *Queries) FinishSubmission(ctx context.Context, arg FinishSubmissionPara
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const getReviewForUpdate = `-- name: GetReviewForUpdate :one
+
+SELECT state, step, due_at FROM user_review
+WHERE user_id = $1 AND problem_id = $2
+FOR UPDATE
+`
+
+type GetReviewForUpdateParams struct {
+	UserID    int64
+	ProblemID int64
+}
+
+type GetReviewForUpdateRow struct {
+	State string
+	Step  int16
+	DueAt time.Time
+}
+
+// Spaced review (internal/submission/review.go).
+func (q *Queries) GetReviewForUpdate(ctx context.Context, arg GetReviewForUpdateParams) (GetReviewForUpdateRow, error) {
+	row := q.db.QueryRow(ctx, getReviewForUpdate, arg.UserID, arg.ProblemID)
+	var i GetReviewForUpdateRow
+	err := row.Scan(&i.State, &i.Step, &i.DueAt)
+	return i, err
 }
 
 const getSubmission = `-- name: GetSubmission :one
@@ -294,6 +358,55 @@ func (q *Queries) LeaseSubmission(ctx context.Context, leaseSeconds int32) (Subm
 	return i, err
 }
 
+const listDueReviews = `-- name: ListDueReviews :many
+SELECT problem_id, step, due_at FROM user_review
+WHERE user_id = $1 AND state = 'ACTIVE' AND due_at <= now()
+  AND ($2::timestamptz IS NULL
+       OR (due_at, problem_id) > ($2::timestamptz, $3::bigint))
+ORDER BY due_at, problem_id
+LIMIT $4
+`
+
+type ListDueReviewsParams struct {
+	UserID   int64
+	AfterDue *time.Time
+	AfterID  *int64
+	Lim      int32
+}
+
+type ListDueReviewsRow struct {
+	ProblemID int64
+	Step      int16
+	DueAt     time.Time
+}
+
+// Reviews due now, oldest first; keyset paged on (due_at, problem_id). Two queries rather than
+// one with a flag, so each is a plain range scan of idx_user_review_due.
+func (q *Queries) ListDueReviews(ctx context.Context, arg ListDueReviewsParams) ([]ListDueReviewsRow, error) {
+	rows, err := q.db.Query(ctx, listDueReviews,
+		arg.UserID,
+		arg.AfterDue,
+		arg.AfterID,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListDueReviewsRow{}
+	for rows.Next() {
+		var i ListDueReviewsRow
+		if err := rows.Scan(&i.ProblemID, &i.Step, &i.DueAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSolved = `-- name: ListSolved :many
 SELECT problem_id, first_solved_at FROM user_problem
 WHERE user_id = $1 AND first_solved_at IS NOT NULL
@@ -330,6 +443,53 @@ func (q *Queries) ListSolved(ctx context.Context, arg ListSolvedParams) ([]ListS
 	for rows.Next() {
 		var i ListSolvedRow
 		if err := rows.Scan(&i.ProblemID, &i.FirstSolvedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUpcomingReviews = `-- name: ListUpcomingReviews :many
+SELECT problem_id, step, due_at FROM user_review
+WHERE user_id = $1 AND state = 'ACTIVE' AND due_at > now()
+  AND ($2::timestamptz IS NULL
+       OR (due_at, problem_id) > ($2::timestamptz, $3::bigint))
+ORDER BY due_at, problem_id
+LIMIT $4
+`
+
+type ListUpcomingReviewsParams struct {
+	UserID   int64
+	AfterDue *time.Time
+	AfterID  *int64
+	Lim      int32
+}
+
+type ListUpcomingReviewsRow struct {
+	ProblemID int64
+	Step      int16
+	DueAt     time.Time
+}
+
+func (q *Queries) ListUpcomingReviews(ctx context.Context, arg ListUpcomingReviewsParams) ([]ListUpcomingReviewsRow, error) {
+	rows, err := q.db.Query(ctx, listUpcomingReviews,
+		arg.UserID,
+		arg.AfterDue,
+		arg.AfterID,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUpcomingReviewsRow{}
+	for rows.Next() {
+		var i ListUpcomingReviewsRow
+		if err := rows.Scan(&i.ProblemID, &i.Step, &i.DueAt); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -508,6 +668,32 @@ func (q *Queries) SolvedProblemIDs(ctx context.Context, userID int64) ([]int64, 
 		return nil, err
 	}
 	return items, nil
+}
+
+const upsertReview = `-- name: UpsertReview :exec
+INSERT INTO user_review (user_id, problem_id, state, step, due_at, last_result_at)
+VALUES ($1, $2, $3, $4, $5, now())
+ON CONFLICT (user_id, problem_id)
+DO UPDATE SET state = EXCLUDED.state, step = EXCLUDED.step, due_at = EXCLUDED.due_at, last_result_at = now()
+`
+
+type UpsertReviewParams struct {
+	UserID    int64
+	ProblemID int64
+	State     string
+	Step      int16
+	DueAt     time.Time
+}
+
+func (q *Queries) UpsertReview(ctx context.Context, arg UpsertReviewParams) error {
+	_, err := q.db.Exec(ctx, upsertReview,
+		arg.UserID,
+		arg.ProblemID,
+		arg.State,
+		arg.Step,
+		arg.DueAt,
+	)
+	return err
 }
 
 const upsertUserProblem = `-- name: UpsertUserProblem :exec
