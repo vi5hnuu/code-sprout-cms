@@ -120,7 +120,11 @@ type RunResult struct {
 	Status string    `json:"status"` // pending | running | done | failed
 	Done   bool      `json:"done"`
 	Cases  []RunCase `json:"cases"`
+	// Message explains a run that failed without results (the judge reports no reason itself).
+	Message *string `json:"message,omitempty"`
 }
+
+const runFailedMessage = "The judge could not run this code. Please try again in a moment."
 
 // RunResult relays a run's progress to the reader who started it.
 func (s *Service) RunResult(ctx context.Context, owner, runID string) (RunResult, error) {
@@ -147,6 +151,11 @@ func (s *Service) RunResult(ctx context.Context, owner, runID string) (RunResult
 	if c := job.Compile; c != nil {
 		// A compile error is the run's only outcome: show it as the first case.
 		out.Cases = append(out.Cases, RunCase{Index: 0, Verdict: string(judge.VerdictCE), Stdout: c.Stdout, Stderr: c.Stderr, TimeMs: c.TimeMs})
+		return out, nil
+	}
+	if job.Status == judge.JobFailed && len(job.Results) == 0 {
+		msg := runFailedMessage
+		out.Message = &msg
 		return out, nil
 	}
 	for _, c := range job.Results {
