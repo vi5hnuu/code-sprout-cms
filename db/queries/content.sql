@@ -334,6 +334,48 @@ WHERE c.type = sqlc.arg(type) AND c.id >= sqlc.arg(lo) AND c.id < sqlc.arg(hi)
   AND c.status = 'PUBLISHED' AND c.visibility = 'PUBLIC' AND c.deleted_at IS NULL
 ORDER BY c.id;
 
+-- Hub pages (categories, tags with live content, public editorial collections) are chunked by
+-- id range exactly like content. The chunk lists are small aggregates, cached for an hour.
+-- name: ListCategorySitemapChunks :many
+SELECT (id / 50000)::int AS chunk, count(*)::int AS url_count, max(updated_at)::timestamptz AS lastmod
+FROM category GROUP BY 1 ORDER BY 1;
+
+-- A category page changes when the category does or when something is published into it.
+-- name: ListCategorySitemapEntries :many
+SELECT cat.path::text AS path,
+       GREATEST(cat.updated_at, COALESCE((
+           SELECT max(c.published_at) FROM content c
+           WHERE c.primary_category_id = cat.id
+             AND c.status = 'PUBLISHED' AND c.visibility = 'PUBLIC' AND c.deleted_at IS NULL), cat.updated_at))::timestamptz AS lastmod
+FROM category cat
+WHERE cat.id >= sqlc.arg(lo) AND cat.id < sqlc.arg(hi)
+ORDER BY cat.id;
+
+-- Tags without live content are left out: an empty listing is a thin page.
+-- name: ListTagSitemapChunks :many
+SELECT (t.id / 50000)::int AS chunk, count(*)::int AS url_count, max(l.last)::timestamptz AS lastmod
+FROM tag t
+CROSS JOIN LATERAL (SELECT max(ct.published_at) AS last FROM content_tag ct WHERE ct.tag_id = t.id AND ct.published_at IS NOT NULL) l
+WHERE l.last IS NOT NULL
+GROUP BY 1 ORDER BY 1;
+
+-- name: ListTagSitemapEntries :many
+SELECT t.kind, t.slug, l.last::timestamptz AS lastmod
+FROM tag t
+CROSS JOIN LATERAL (SELECT max(ct.published_at) AS last FROM content_tag ct WHERE ct.tag_id = t.id AND ct.published_at IS NOT NULL) l
+WHERE t.id >= sqlc.arg(lo) AND t.id < sqlc.arg(hi) AND l.last IS NOT NULL
+ORDER BY t.id;
+
+-- name: ListCollectionSitemapChunks :many
+SELECT (id / 50000)::int AS chunk, count(*)::int AS url_count, max(updated_at)::timestamptz AS lastmod
+FROM collection WHERE kind <> 'LIST' AND visibility = 'PUBLIC'
+GROUP BY 1 ORDER BY 1;
+
+-- name: ListCollectionSitemapEntries :many
+SELECT kind, slug, updated_at FROM collection
+WHERE kind <> 'LIST' AND visibility = 'PUBLIC' AND id >= sqlc.arg(lo) AND id < sqlc.arg(hi)
+ORDER BY id;
+
 -- name: GetPathParts :one
 SELECT c.type, c.locale, c.slug, COALESCE(split_part(cat.path::text, '.', 1), '')::text AS section
 FROM content c LEFT JOIN category cat ON cat.id = c.primary_category_id

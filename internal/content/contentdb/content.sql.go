@@ -702,6 +702,150 @@ func (q *Queries) ListBlogCovers(ctx context.Context, ids []int64) ([]ListBlogCo
 	return items, nil
 }
 
+const listCategorySitemapChunks = `-- name: ListCategorySitemapChunks :many
+SELECT (id / 50000)::int AS chunk, count(*)::int AS url_count, max(updated_at)::timestamptz AS lastmod
+FROM category GROUP BY 1 ORDER BY 1
+`
+
+type ListCategorySitemapChunksRow struct {
+	Chunk    int32
+	UrlCount int32
+	Lastmod  time.Time
+}
+
+// Hub pages (categories, tags with live content, public editorial collections) are chunked by
+// id range exactly like content. The chunk lists are small aggregates, cached for an hour.
+func (q *Queries) ListCategorySitemapChunks(ctx context.Context) ([]ListCategorySitemapChunksRow, error) {
+	rows, err := q.db.Query(ctx, listCategorySitemapChunks)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListCategorySitemapChunksRow{}
+	for rows.Next() {
+		var i ListCategorySitemapChunksRow
+		if err := rows.Scan(&i.Chunk, &i.UrlCount, &i.Lastmod); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCategorySitemapEntries = `-- name: ListCategorySitemapEntries :many
+SELECT cat.path::text AS path,
+       GREATEST(cat.updated_at, COALESCE((
+           SELECT max(c.published_at) FROM content c
+           WHERE c.primary_category_id = cat.id
+             AND c.status = 'PUBLISHED' AND c.visibility = 'PUBLIC' AND c.deleted_at IS NULL), cat.updated_at))::timestamptz AS lastmod
+FROM category cat
+WHERE cat.id >= $1 AND cat.id < $2
+ORDER BY cat.id
+`
+
+type ListCategorySitemapEntriesParams struct {
+	Lo int64
+	Hi int64
+}
+
+type ListCategorySitemapEntriesRow struct {
+	Path    string
+	Lastmod time.Time
+}
+
+// A category page changes when the category does or when something is published into it.
+func (q *Queries) ListCategorySitemapEntries(ctx context.Context, arg ListCategorySitemapEntriesParams) ([]ListCategorySitemapEntriesRow, error) {
+	rows, err := q.db.Query(ctx, listCategorySitemapEntries, arg.Lo, arg.Hi)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListCategorySitemapEntriesRow{}
+	for rows.Next() {
+		var i ListCategorySitemapEntriesRow
+		if err := rows.Scan(&i.Path, &i.Lastmod); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCollectionSitemapChunks = `-- name: ListCollectionSitemapChunks :many
+SELECT (id / 50000)::int AS chunk, count(*)::int AS url_count, max(updated_at)::timestamptz AS lastmod
+FROM collection WHERE kind <> 'LIST' AND visibility = 'PUBLIC'
+GROUP BY 1 ORDER BY 1
+`
+
+type ListCollectionSitemapChunksRow struct {
+	Chunk    int32
+	UrlCount int32
+	Lastmod  time.Time
+}
+
+func (q *Queries) ListCollectionSitemapChunks(ctx context.Context) ([]ListCollectionSitemapChunksRow, error) {
+	rows, err := q.db.Query(ctx, listCollectionSitemapChunks)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListCollectionSitemapChunksRow{}
+	for rows.Next() {
+		var i ListCollectionSitemapChunksRow
+		if err := rows.Scan(&i.Chunk, &i.UrlCount, &i.Lastmod); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCollectionSitemapEntries = `-- name: ListCollectionSitemapEntries :many
+SELECT kind, slug, updated_at FROM collection
+WHERE kind <> 'LIST' AND visibility = 'PUBLIC' AND id >= $1 AND id < $2
+ORDER BY id
+`
+
+type ListCollectionSitemapEntriesParams struct {
+	Lo int64
+	Hi int64
+}
+
+type ListCollectionSitemapEntriesRow struct {
+	Kind      string
+	Slug      string
+	UpdatedAt time.Time
+}
+
+func (q *Queries) ListCollectionSitemapEntries(ctx context.Context, arg ListCollectionSitemapEntriesParams) ([]ListCollectionSitemapEntriesRow, error) {
+	rows, err := q.db.Query(ctx, listCollectionSitemapEntries, arg.Lo, arg.Hi)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListCollectionSitemapEntriesRow{}
+	for rows.Next() {
+		var i ListCollectionSitemapEntriesRow
+		if err := rows.Scan(&i.Kind, &i.Slug, &i.UpdatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listContentAssetIDs = `-- name: ListContentAssetIDs :many
 SELECT file_id FROM content_asset WHERE content_id = $1
 `
@@ -1439,6 +1583,80 @@ func (q *Queries) ListSitemapEntries(ctx context.Context, arg ListSitemapEntries
 			&i.LastPublishedAt,
 			&i.Section,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTagSitemapChunks = `-- name: ListTagSitemapChunks :many
+SELECT (t.id / 50000)::int AS chunk, count(*)::int AS url_count, max(l.last)::timestamptz AS lastmod
+FROM tag t
+CROSS JOIN LATERAL (SELECT max(ct.published_at) AS last FROM content_tag ct WHERE ct.tag_id = t.id AND ct.published_at IS NOT NULL) l
+WHERE l.last IS NOT NULL
+GROUP BY 1 ORDER BY 1
+`
+
+type ListTagSitemapChunksRow struct {
+	Chunk    int32
+	UrlCount int32
+	Lastmod  time.Time
+}
+
+// Tags without live content are left out: an empty listing is a thin page.
+func (q *Queries) ListTagSitemapChunks(ctx context.Context) ([]ListTagSitemapChunksRow, error) {
+	rows, err := q.db.Query(ctx, listTagSitemapChunks)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListTagSitemapChunksRow{}
+	for rows.Next() {
+		var i ListTagSitemapChunksRow
+		if err := rows.Scan(&i.Chunk, &i.UrlCount, &i.Lastmod); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTagSitemapEntries = `-- name: ListTagSitemapEntries :many
+SELECT t.kind, t.slug, l.last::timestamptz AS lastmod
+FROM tag t
+CROSS JOIN LATERAL (SELECT max(ct.published_at) AS last FROM content_tag ct WHERE ct.tag_id = t.id AND ct.published_at IS NOT NULL) l
+WHERE t.id >= $1 AND t.id < $2 AND l.last IS NOT NULL
+ORDER BY t.id
+`
+
+type ListTagSitemapEntriesParams struct {
+	Lo int64
+	Hi int64
+}
+
+type ListTagSitemapEntriesRow struct {
+	Kind    string
+	Slug    string
+	Lastmod time.Time
+}
+
+func (q *Queries) ListTagSitemapEntries(ctx context.Context, arg ListTagSitemapEntriesParams) ([]ListTagSitemapEntriesRow, error) {
+	rows, err := q.db.Query(ctx, listTagSitemapEntries, arg.Lo, arg.Hi)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListTagSitemapEntriesRow{}
+	for rows.Next() {
+		var i ListTagSitemapEntriesRow
+		if err := rows.Scan(&i.Kind, &i.Slug, &i.Lastmod); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

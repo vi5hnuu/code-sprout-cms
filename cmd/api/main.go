@@ -98,7 +98,7 @@ func run() error {
 	collection.NewHandler(collection.NewService(database, reader, policy)).Routes(api, auth.RequireUser)
 	roles.NewHandler(access.NewGrants(database, policy), users, taxonomies).Routes(api, auth.RequireUser)
 
-	content.NewSitemaps(database).Routes(api)
+	content.NewSitemaps(database, assets).Routes(api)
 
 	problems := problem.NewService(database, contents, reader, assets, policy)
 	searchIndex := search.NewMeili(cfg.Search.URL, cfg.Search.APIKey, cfg.Search.Index)

@@ -84,7 +84,7 @@ func run() error {
 		RevalidateURL: dc.RevalidateURL, RevalidateSecret: dc.RevalidateSecret,
 		CloudflareZoneID: dc.CloudflareZoneID, CloudflareAPIToken: dc.CloudflareAPIToken,
 		SiteURL: dc.SiteURL, IndexNowKey: dc.IndexNowKey,
-	}, reader, content.NewSitemaps(database)).Register(dispatcher)
+	}, reader, content.NewSitemaps(database, assets)).Register(dispatcher)
 
 	var wg sync.WaitGroup
 	wg.Go(func() { dispatcher.Run(ctx) })
