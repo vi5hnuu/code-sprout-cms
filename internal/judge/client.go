@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 )
@@ -41,6 +42,7 @@ const (
 	VerdictRE  Verdict = "RE"
 	VerdictCE  Verdict = "CE"
 	VerdictIE  Verdict = "IE" // judge-side failure: not the user's fault, safe to retry
+	VerdictSK  Verdict = "SK" // skipped: the judge stops running cases after the first failure
 )
 
 type TestCase struct {
@@ -84,6 +86,26 @@ type JobResult struct {
 	Verdict     *Verdict     `json:"verdict,omitempty"`
 	TotalTimeMs *int         `json:"total_time_ms,omitempty"`
 	Results     []CaseResult `json:"results"`
+	// Compile is the compile-error result, when the code did not compile. ls-judge reports it
+	// as a row with index 0; Get moves it here so Results holds test cases only.
+	Compile *CaseResult `json:"-"`
+}
+
+// normalize maps ls-judge's numbering onto the CMS's: there, test-case results are 1-based
+// and index 0 is the compile-error row. Here Results are 0-based test cases in order.
+func (r *JobResult) normalize() {
+	cases := make([]CaseResult, 0, len(r.Results))
+	for _, c := range r.Results {
+		if c.Index == 0 {
+			compile := c
+			r.Compile = &compile
+			continue
+		}
+		c.Index--
+		cases = append(cases, c)
+	}
+	slices.SortFunc(cases, func(a, b CaseResult) int { return a.Index - b.Index })
+	r.Results = cases
 }
 
 var (
@@ -173,8 +195,11 @@ func (c *Client) ExecuteBatch(ctx context.Context, reqs []ExecuteRequest, idempo
 
 func (c *Client) Get(ctx context.Context, jobID string) (JobResult, error) {
 	var out JobResult
-	err := c.do(ctx, http.MethodGet, "/jobs/"+url.PathEscape(jobID), nil, "", &out)
-	return out, err
+	if err := c.do(ctx, http.MethodGet, "/jobs/"+url.PathEscape(jobID), nil, "", &out); err != nil {
+		return JobResult{}, err
+	}
+	out.normalize()
+	return out, nil
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body any, idempotencyKey string, out any) error {

@@ -56,11 +56,17 @@ func fakeServer(t *testing.T) (*httptest.Server, *[]string, *[]string) {
 		_ = json.NewEncoder(w).Encode(resp)
 	})
 	mux.HandleFunc("GET /jobs/{id}", func(w http.ResponseWriter, r *http.Request) {
-		if r.PathValue("id") != "j-1" {
+		if id := r.PathValue("id"); id != "j-1" && id != "j-ce" {
 			writeErr(w, 404, "not_found", "job not found")
 			return
 		}
-		_, _ = w.Write([]byte(`{"job_id":"j-1","status":"done","verdict":"AC","results":[{"index":0,"verdict":"AC","stdout":"3","time_ms":4}]}`))
+		// ls-judge numbers test results from 1; index 0 is reserved for a compile error.
+		switch r.PathValue("id") {
+		case "j-1":
+			_, _ = w.Write([]byte(`{"job_id":"j-1","status":"done","verdict":"WA","results":[{"index":2,"verdict":"WA","stdout":"4"},{"index":1,"verdict":"AC","stdout":"3","time_ms":4},{"index":3,"verdict":"SK"}]}`))
+		case "j-ce":
+			_, _ = w.Write([]byte(`{"job_id":"j-ce","status":"done","verdict":"CE","results":[{"index":0,"verdict":"CE","stderr":"syntax error"}]}`))
+		}
 	})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-API-Key") != "secret" {
@@ -83,8 +89,17 @@ func TestClient(t *testing.T) {
 		t.Fatalf("execute = %q, %v, key %v", id, err, *keys)
 	}
 	job, err := c.Get(ctx, "j-1")
-	if err != nil || !job.Status.Finished() || len(job.Results) != 1 || *job.Results[0].Stdout != "3" {
+	if err != nil || !job.Status.Finished() || len(job.Results) != 3 || job.Compile != nil {
 		t.Fatalf("get = %+v, %v", job, err)
+	}
+	for i, want := range []Verdict{VerdictAC, VerdictWA, VerdictSK} {
+		if r := job.Results[i]; r.Index != i || r.Verdict != want {
+			t.Fatalf("result %d = %+v, want 0-based index %d with %s", i, r, i, want)
+		}
+	}
+	ce, err := c.Get(ctx, "j-ce")
+	if err != nil || ce.Compile == nil || *ce.Compile.Stderr != "syntax error" || len(ce.Results) != 0 {
+		t.Fatalf("compile error = %+v, %v", ce, err)
 	}
 	if _, err := c.Get(ctx, "nope"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing job: %v", err)

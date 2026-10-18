@@ -143,13 +143,18 @@ func (s *Service) RunResult(ctx context.Context, owner, runID string) (RunResult
 	if err != nil {
 		return RunResult{}, judgeError(err)
 	}
-	out := RunResult{Status: string(job.Status), Done: job.Status.Finished(), Cases: make([]RunCase, len(job.Results))}
-	for i, c := range job.Results {
+	out := RunResult{Status: string(job.Status), Done: job.Status.Finished(), Cases: make([]RunCase, 0, len(job.Results))}
+	if c := job.Compile; c != nil {
+		// A compile error is the run's only outcome: show it as the first case.
+		out.Cases = append(out.Cases, RunCase{Index: 0, Verdict: string(judge.VerdictCE), Stdout: c.Stdout, Stderr: c.Stderr, TimeMs: c.TimeMs})
+		return out, nil
+	}
+	for _, c := range job.Results {
 		v := string(c.Verdict)
 		if runKind(kind) == runFree && (c.Verdict == judge.VerdictAC || c.Verdict == judge.VerdictWA) {
 			v = "OK"
 		}
-		out.Cases[i] = RunCase{Index: c.Index, Verdict: v, Stdout: c.Stdout, Stderr: c.Stderr, TimeMs: c.TimeMs}
+		out.Cases = append(out.Cases, RunCase{Index: c.Index, Verdict: v, Stdout: c.Stdout, Stderr: c.Stderr, TimeMs: c.TimeMs})
 	}
 	return out, nil
 }

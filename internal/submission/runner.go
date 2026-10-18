@@ -205,20 +205,30 @@ func aggregate(jobs []judge.JobResult, spans []judge.Span, total, samples int) o
 	out := outcome{verdict: judge.VerdictAC, total: total}
 	var slowest *int
 	for n, j := range jobs {
-		offset := spans[n].Start
 		if j.Status == judge.JobFailed {
 			return outcome{verdict: judge.VerdictIE, total: total}
 		}
+		// The same code compiles the same way in every job: one compile error decides.
+		if j.Compile != nil {
+			ce := outcome{verdict: judge.VerdictCE, total: total}
+			if j.Compile.Stderr != nil {
+				msg := truncate(*j.Compile.Stderr, 4000)
+				ce.message = &msg
+			}
+			return ce
+		}
+		offset := spans[n].Start
 		for _, c := range j.Results {
 			idx := offset + c.Index
 			if c.TimeMs != nil && (slowest == nil || *c.TimeMs > *slowest) {
 				slowest = c.TimeMs
 			}
-			if c.Verdict == judge.VerdictAC {
+			switch {
+			case c.Verdict == judge.VerdictAC:
 				out.passed++
-				continue
-			}
-			if out.verdict == judge.VerdictAC {
+			case c.Verdict == judge.VerdictSK:
+				// Not run: an earlier case in this job already decided the verdict.
+			case out.verdict == judge.VerdictAC:
 				out.verdict = c.Verdict
 				if idx < samples {
 					i := int32(idx)

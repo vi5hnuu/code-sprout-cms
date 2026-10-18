@@ -85,16 +85,17 @@ func (f *fakeJudge) Get(_ context.Context, id string) (judge.JobResult, error) {
 	if f.jobFailed {
 		return judge.JobResult{JobID: id, Status: judge.JobFailed}, nil
 	}
+	// Results as judge.Client returns them: 0-based cases, a compile error on its own.
 	out := judge.JobResult{JobID: id, Status: judge.JobDone}
+	if strings.Contains(req.Code, "COMPILE_ERROR") {
+		msg := "main.py:1: SyntaxError"
+		out.Compile = &judge.CaseResult{Verdict: judge.VerdictCE, Stderr: &msg}
+		return out, nil
+	}
 	for i, c := range req.TestCases {
 		v, stdout := judge.VerdictAC, c.Expected
 		ms := 10 + i
-		switch {
-		case strings.Contains(req.Code, "COMPILE_ERROR"):
-			msg := "main.py:1: SyntaxError"
-			out.Results = append(out.Results, judge.CaseResult{Index: i, Verdict: judge.VerdictCE, Stderr: &msg})
-			continue
-		case wrongFor(req.Code, c.Stdin):
+		if wrongFor(req.Code, c.Stdin) {
 			v, stdout = judge.VerdictWA, "nope"
 		}
 		out.Results = append(out.Results, judge.CaseResult{Index: i, Verdict: v, Stdout: &stdout, TimeMs: &ms})
