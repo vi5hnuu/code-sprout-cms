@@ -207,6 +207,65 @@ func (q *Queries) DeleteReaction(ctx context.Context, arg DeleteReactionParams) 
 	return result.RowsAffected(), nil
 }
 
+const deleteUserBookmarkLists = `-- name: DeleteUserBookmarkLists :exec
+DELETE FROM bookmark_list WHERE user_id = $1
+`
+
+func (q *Queries) DeleteUserBookmarkLists(ctx context.Context, userID int64) error {
+	_, err := q.db.Exec(ctx, deleteUserBookmarkLists, userID)
+	return err
+}
+
+const deleteUserBookmarks = `-- name: DeleteUserBookmarks :many
+DELETE FROM bookmark WHERE user_id = $1 RETURNING content_id
+`
+
+func (q *Queries) DeleteUserBookmarks(ctx context.Context, userID int64) ([]int64, error) {
+	rows, err := q.db.Query(ctx, deleteUserBookmarks, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var content_id int64
+		if err := rows.Scan(&content_id); err != nil {
+			return nil, err
+		}
+		items = append(items, content_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const deleteUserReactions = `-- name: DeleteUserReactions :many
+
+DELETE FROM reaction WHERE user_id = $1 RETURNING content_id
+`
+
+// Account erase. Each returns the pages it touched so counters and caches can follow.
+func (q *Queries) DeleteUserReactions(ctx context.Context, userID int64) ([]int64, error) {
+	rows, err := q.db.Query(ctx, deleteUserReactions, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var content_id int64
+		if err := rows.Scan(&content_id); err != nil {
+			return nil, err
+		}
+		items = append(items, content_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const editComment = `-- name: EditComment :one
 UPDATE comment SET body_md = $3, edited_at = now() WHERE content_id = $1 AND id = $2 RETURNING id, content_id, root_id, parent_id, author_id, body_md, status, score, reply_count, created_at, edited_at
 `
@@ -234,6 +293,45 @@ func (q *Queries) EditComment(ctx context.Context, arg EditCommentParams) (Comme
 		&i.EditedAt,
 	)
 	return i, err
+}
+
+const eraseUserComments = `-- name: EraseUserComments :many
+WITH old AS (
+    SELECT cm.content_id, cm.id, cm.root_id, cm.status FROM comment cm WHERE cm.author_id = $1 FOR UPDATE
+)
+UPDATE comment c
+SET status = 'DELETED', body_md = '[deleted]', edited_at = NULL
+FROM old
+WHERE c.content_id = old.content_id AND c.id = old.id
+RETURNING old.content_id, old.root_id, old.status AS old_status
+`
+
+type EraseUserCommentsRow struct {
+	ContentID int64
+	RootID    *int64
+	OldStatus string
+}
+
+// Every comment by the user loses its text (deleted ones too: deleting only hid them). The old
+// status says which were visible, so comment and reply counts drop by exactly those.
+func (q *Queries) EraseUserComments(ctx context.Context, authorID int64) ([]EraseUserCommentsRow, error) {
+	rows, err := q.db.Query(ctx, eraseUserComments, authorID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EraseUserCommentsRow{}
+	for rows.Next() {
+		var i EraseUserCommentsRow
+		if err := rows.Scan(&i.ContentID, &i.RootID, &i.OldStatus); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getBookmarkList = `-- name: GetBookmarkList :one

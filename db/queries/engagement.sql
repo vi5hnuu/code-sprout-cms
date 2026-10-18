@@ -153,3 +153,26 @@ WHERE s.content_id IN (
     SELECT b.content_id FROM content_stats b WHERE b.content_id > sqlc.arg(after_id) ORDER BY b.content_id LIMIT sqlc.arg(row_limit)
 )
 RETURNING s.content_id;
+
+-- Account erase. Each returns the pages it touched so counters and caches can follow.
+
+-- name: DeleteUserReactions :many
+DELETE FROM reaction WHERE user_id = $1 RETURNING content_id;
+
+-- name: DeleteUserBookmarks :many
+DELETE FROM bookmark WHERE user_id = $1 RETURNING content_id;
+
+-- name: DeleteUserBookmarkLists :exec
+DELETE FROM bookmark_list WHERE user_id = $1;
+
+-- Every comment by the user loses its text (deleted ones too: deleting only hid them). The old
+-- status says which were visible, so comment and reply counts drop by exactly those.
+-- name: EraseUserComments :many
+WITH old AS (
+    SELECT cm.content_id, cm.id, cm.root_id, cm.status FROM comment cm WHERE cm.author_id = $1 FOR UPDATE
+)
+UPDATE comment c
+SET status = 'DELETED', body_md = '[deleted]', edited_at = NULL
+FROM old
+WHERE c.content_id = old.content_id AND c.id = old.id
+RETURNING old.content_id, old.root_id, old.status AS old_status;

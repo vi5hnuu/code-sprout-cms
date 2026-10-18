@@ -16,3 +16,6 @@ WHERE user_id = sqlc.arg(user_id)
        OR (updated_at, content_id) < (sqlc.narg(after_updated)::timestamptz, sqlc.narg(after_id)::bigint))
 ORDER BY updated_at DESC, content_id DESC
 LIMIT sqlc.arg(row_limit);
+
+-- name: DeleteUserNotes :exec
+DELETE FROM user_note WHERE user_id = $1;

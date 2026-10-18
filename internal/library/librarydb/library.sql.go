@@ -24,6 +24,15 @@ func (q *Queries) DeleteNote(ctx context.Context, arg DeleteNoteParams) error {
 	return err
 }
 
+const deleteUserNotes = `-- name: DeleteUserNotes :exec
+DELETE FROM user_note WHERE user_id = $1
+`
+
+func (q *Queries) DeleteUserNotes(ctx context.Context, userID int64) error {
+	_, err := q.db.Exec(ctx, deleteUserNotes, userID)
+	return err
+}
+
 const getNote = `-- name: GetNote :one
 SELECT user_id, content_id, body_md, updated_at FROM user_note WHERE user_id = $1 AND content_id = $2
 `

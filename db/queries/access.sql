@@ -33,3 +33,6 @@ RETURNING id, user_id, role, scope_category_id, granted_by, created_at;
 -- name: DeleteGrant :one
 DELETE FROM cms_role_grant WHERE id = $1
 RETURNING id, user_id, role, scope_category_id, granted_by, created_at;
+
+-- name: DeleteUserGrants :exec
+DELETE FROM cms_role_grant WHERE user_id = $1;

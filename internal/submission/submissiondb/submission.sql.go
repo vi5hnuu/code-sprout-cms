@@ -104,7 +104,36 @@ func (q *Queries) CountUserSubmissions(ctx context.Context, userID int64) (int64
 	return count, err
 }
 
-const finishSubmission = `-- name: FinishSubmission :exec
+const deleteUserActivity = `-- name: DeleteUserActivity :exec
+DELETE FROM user_activity_day WHERE user_id = $1
+`
+
+func (q *Queries) DeleteUserActivity(ctx context.Context, userID int64) error {
+	_, err := q.db.Exec(ctx, deleteUserActivity, userID)
+	return err
+}
+
+const deleteUserProblems = `-- name: DeleteUserProblems :exec
+DELETE FROM user_problem WHERE user_id = $1
+`
+
+func (q *Queries) DeleteUserProblems(ctx context.Context, userID int64) error {
+	_, err := q.db.Exec(ctx, deleteUserProblems, userID)
+	return err
+}
+
+const deleteUserSubmissions = `-- name: DeleteUserSubmissions :exec
+
+DELETE FROM submission WHERE user_id = $1
+`
+
+// Account erase.
+func (q *Queries) DeleteUserSubmissions(ctx context.Context, userID int64) error {
+	_, err := q.db.Exec(ctx, deleteUserSubmissions, userID)
+	return err
+}
+
+const finishSubmission = `-- name: FinishSubmission :execrows
 UPDATE submission
 SET status = $1, verdict = $2, passed = $3, total = $4,
     time_ms = $5, failed_index = $6, message = $7,
@@ -124,8 +153,9 @@ type FinishSubmissionParams struct {
 	ID          int64
 }
 
-func (q *Queries) FinishSubmission(ctx context.Context, arg FinishSubmissionParams) error {
-	_, err := q.db.Exec(ctx, finishSubmission,
+// Zero rows means the submission is gone (its reader erased their account meanwhile).
+func (q *Queries) FinishSubmission(ctx context.Context, arg FinishSubmissionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, finishSubmission,
 		arg.Status,
 		arg.Verdict,
 		arg.Passed,
@@ -136,7 +166,10 @@ func (q *Queries) FinishSubmission(ctx context.Context, arg FinishSubmissionPara
 		arg.UserID,
 		arg.ID,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const getSubmission = `-- name: GetSubmission :one

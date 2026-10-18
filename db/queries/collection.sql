@@ -77,3 +77,8 @@ WHERE c.kind = sqlc.arg(kind)
   AND (sqlc.narg(after_id)::bigint IS NULL OR c.id < sqlc.narg(after_id))
 ORDER BY c.id DESC
 LIMIT sqlc.arg(row_limit);
+
+-- Account erase: the reader's own lists go (items cascade). Editorial collections they own
+-- stay; they belong to the site.
+-- name: DeleteUserLists :exec
+DELETE FROM collection WHERE owner_id = $1 AND kind = 'LIST';

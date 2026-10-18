@@ -28,6 +28,15 @@ func (q *Queries) DeleteGrant(ctx context.Context, id int64) (CmsRoleGrant, erro
 	return i, err
 }
 
+const deleteUserGrants = `-- name: DeleteUserGrants :exec
+DELETE FROM cms_role_grant WHERE user_id = $1
+`
+
+func (q *Queries) DeleteUserGrants(ctx context.Context, userID int64) error {
+	_, err := q.db.Exec(ctx, deleteUserGrants, userID)
+	return err
+}
+
 const hasRoleFor = `-- name: HasRoleFor :one
 SELECT EXISTS (
     SELECT 1

@@ -42,7 +42,8 @@ WHERE user_id = sqlc.arg(user_id) AND id = sqlc.arg(id);
 UPDATE submission SET status = 'QUEUED', lease_until = sqlc.arg(retry_at)
 WHERE user_id = sqlc.arg(user_id) AND id = sqlc.arg(id);
 
--- name: FinishSubmission :exec
+-- Zero rows means the submission is gone (its reader erased their account meanwhile).
+-- name: FinishSubmission :execrows
 UPDATE submission
 SET status = sqlc.arg(status), verdict = sqlc.narg(verdict), passed = sqlc.arg(passed), total = sqlc.arg(total),
     time_ms = sqlc.narg(time_ms), failed_index = sqlc.narg(failed_index), message = sqlc.narg(message),
@@ -88,3 +89,14 @@ SELECT day, submissions, accepted FROM user_activity_day WHERE user_id = $1 AND 
 SELECT language, count(DISTINCT problem_id)::int AS solved
 FROM submission WHERE user_id = $1 AND verdict = 'AC'
 GROUP BY language ORDER BY solved DESC;
+
+-- Account erase.
+
+-- name: DeleteUserSubmissions :exec
+DELETE FROM submission WHERE user_id = $1;
+
+-- name: DeleteUserProblems :exec
+DELETE FROM user_problem WHERE user_id = $1;
+
+-- name: DeleteUserActivity :exec
+DELETE FROM user_activity_day WHERE user_id = $1;

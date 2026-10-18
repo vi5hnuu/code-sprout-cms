@@ -10,6 +10,20 @@ import (
 	"time"
 )
 
+const anonymizeUser = `-- name: AnonymizeUser :exec
+UPDATE app_user
+SET auth_sub = 'erased:' || id, handle = NULL, display_name = 'Former member', bio = NULL,
+    avatar_file_id = NULL, deleted_at = now(), updated_at = now()
+WHERE id = $1
+`
+
+// Account erase: the row stays for references (authored pages, audit) but keeps nothing
+// personal. The auth subject is replaced so a returning sign-in provisions a fresh account.
+func (q *Queries) AnonymizeUser(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, anonymizeUser, id)
+	return err
+}
+
 const findUserIDBySub = `-- name: FindUserIDBySub :one
 SELECT id FROM app_user WHERE auth_sub = $1
 `

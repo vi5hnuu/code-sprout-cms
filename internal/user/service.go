@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/golang-lru/v2/expirable"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"code-sprout-cms/internal/access"
@@ -104,3 +105,13 @@ func fallbackDisplayName(name string) string {
 	}
 	return "Sprout reader"
 }
+
+// EraseUser anonymises the user's row (account erase), inside the caller's transaction. The row
+// stays because authored pages and audit entries point at it.
+func (s *Service) EraseUser(ctx context.Context, tx pgx.Tx, userID int64) error {
+	return userdb.New(tx).AnonymizeUser(ctx, userID)
+}
+
+// Forget drops a cached subject mapping after an erase, so a later sign-in with the same
+// subject provisions a fresh account instead of reaching the anonymised row.
+func (s *Service) Forget(sub string) { s.ids.Remove(sub) }

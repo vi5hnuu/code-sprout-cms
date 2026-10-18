@@ -91,6 +91,17 @@ func (q *Queries) DeleteCollection(ctx context.Context, id int64) error {
 	return err
 }
 
+const deleteUserLists = `-- name: DeleteUserLists :exec
+DELETE FROM collection WHERE owner_id = $1 AND kind = 'LIST'
+`
+
+// Account erase: the reader's own lists go (items cascade). Editorial collections they own
+// stay; they belong to the site.
+func (q *Queries) DeleteUserLists(ctx context.Context, ownerID int64) error {
+	_, err := q.db.Exec(ctx, deleteUserLists, ownerID)
+	return err
+}
+
 const getCollection = `-- name: GetCollection :one
 SELECT id, kind, slug, title, description, owner_id, visibility, created_at, updated_at FROM collection WHERE id = $1
 `

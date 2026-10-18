@@ -15,6 +15,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"code-sprout-cms/internal/access"
+	"code-sprout-cms/internal/account"
 	"code-sprout-cms/internal/asset"
 	"code-sprout-cms/internal/auth"
 	"code-sprout-cms/internal/collection"
@@ -83,6 +84,9 @@ func run() error {
 
 	api := http.NewServeMux()
 	user.NewHandler(users).Routes(api, auth.RequireUser)
+	account.NewHandler(account.NewService(database, users.Forget,
+		engagement.EraseUser, library.EraseUser, submission.EraseUser, collection.EraseUser, access.EraseUser, users.EraseUser,
+	)).Routes(api, auth.RequireUser)
 	taxonomy.NewHandler(taxonomies).Routes(api, auth.RequireUser)
 	asset.NewHandler(assets).Routes(api, auth.RequireUser,
 		limiter.Middleware("uploads", ratelimit.PerMinute(30, 10), clientIP))

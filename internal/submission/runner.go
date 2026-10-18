@@ -258,11 +258,12 @@ func (s *Service) finish(ctx context.Context, sub submissiondb.Submission, out o
 	v := string(out.verdict)
 	return s.db.InTx(ctx, func(tx pgx.Tx) error {
 		q := submissiondb.New(tx)
-		if err := q.FinishSubmission(ctx, submissiondb.FinishSubmissionParams{
+		n, err := q.FinishSubmission(ctx, submissiondb.FinishSubmissionParams{
 			UserID: sub.UserID, ID: sub.ID, Status: string(StatusDone), Verdict: &v, Passed: int32(out.passed),
 			Total: int32(out.total), TimeMs: out.timeMs, FailedIndex: out.failedIndex, Message: out.message,
-		}); err != nil {
-			return err
+		})
+		if err != nil || n == 0 {
+			return err // no row: the reader erased their account; record no progress for them
 		}
 		if err := q.UpsertUserProblem(ctx, submissiondb.UpsertUserProblemParams{UserID: sub.UserID, ProblemID: sub.ProblemID, Solved: accepted}); err != nil {
 			return err
@@ -280,9 +281,10 @@ func (s *Service) finish(ctx context.Context, sub submissiondb.Submission, out o
 
 // fail marks a submission as not judgeable (a system problem, not the user's code).
 func (s *Service) fail(ctx context.Context, sub submissiondb.Submission, reason string) error {
-	return submissiondb.New(s.db.Primary).FinishSubmission(ctx, submissiondb.FinishSubmissionParams{
+	_, err := submissiondb.New(s.db.Primary).FinishSubmission(ctx, submissiondb.FinishSubmissionParams{
 		UserID: sub.UserID, ID: sub.ID, Status: string(StatusFailed), Message: &reason,
 	})
+	return err
 }
 
 // handleRunError retries transient judge trouble later and gives up after maxAttempts.
