@@ -12,9 +12,9 @@ import (
 
 // fakeServer mimics ls-judge's wire format: {"error":{"code","message"}} envelopes, the 207
 // batch shape and X-API-Key auth.
-func fakeServer(t *testing.T) (*httptest.Server, *[]string) {
+func fakeServer(t *testing.T) (*httptest.Server, *[]string, *[]string) {
 	t.Helper()
-	var keys []string
+	var keys, languages []string
 	mux := http.NewServeMux()
 	writeErr := func(w http.ResponseWriter, status int, code, msg string) {
 		w.WriteHeader(status)
@@ -24,6 +24,7 @@ func fakeServer(t *testing.T) (*httptest.Server, *[]string) {
 		keys = append(keys, r.Header.Get("Idempotency-Key"))
 		var req ExecuteRequest
 		_ = json.NewDecoder(r.Body).Decode(&req)
+		languages = append(languages, req.Language)
 		switch req.Language {
 		case "cobol":
 			writeErr(w, 400, "invalid_request", "unknown language: cobol")
@@ -45,6 +46,7 @@ func fakeServer(t *testing.T) (*httptest.Server, *[]string) {
 		w.WriteHeader(http.StatusMultiStatus)
 		resp := map[string]any{"accepted": []map[string]any{}, "errors": []map[string]any{}}
 		for i, j := range jobs {
+			languages = append(languages, j.Language)
 			if j.Language == "cobol" {
 				resp["errors"] = append(resp["errors"].([]map[string]any), map[string]any{"index": i, "error": "unknown language"})
 				continue
@@ -68,12 +70,12 @@ func fakeServer(t *testing.T) (*httptest.Server, *[]string) {
 		mux.ServeHTTP(w, r)
 	}))
 	t.Cleanup(srv.Close)
-	return srv, &keys
+	return srv, &keys, &languages
 }
 
 func TestClient(t *testing.T) {
-	srv, keys := fakeServer(t)
-	c := New(srv.URL, "secret")
+	srv, keys, _ := fakeServer(t)
+	c := New(srv.URL, "secret", nil)
 	ctx := context.Background()
 
 	id, err := c.Execute(ctx, ExecuteRequest{Language: "python", Code: "print(3)"}, "k1")
@@ -107,10 +109,27 @@ func TestClient(t *testing.T) {
 		t.Fatalf("partially refused batch must fail as a whole: %v", err)
 	}
 
-	if _, err := New(srv.URL, "wrong").Execute(ctx, ExecuteRequest{Language: "python"}, ""); !errors.Is(err, ErrUnavailable) {
+	if _, err := New(srv.URL, "wrong", nil).Execute(ctx, ExecuteRequest{Language: "python"}, ""); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("bad API key must be retryable (operator problem): %v", err)
 	}
-	if _, err := New("", "").Execute(ctx, ExecuteRequest{}, ""); !errors.Is(err, ErrUnavailable) {
+	if _, err := New("", "", nil).Execute(ctx, ExecuteRequest{}, ""); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("unconfigured judge: %v", err)
+	}
+}
+
+// Requests name an exact runtime, so the judge never picks a version on the CMS's behalf.
+func TestClientPinsRuntimes(t *testing.T) {
+	srv, _, languages := fakeServer(t)
+	c := New(srv.URL, "secret", map[string]string{"python": "python-3.12", "go": "go-1.24"})
+	ctx := context.Background()
+	if _, err := c.Execute(ctx, ExecuteRequest{Language: "python"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.ExecuteBatch(ctx, []ExecuteRequest{{Language: "go"}, {Language: "python"}}, "b"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"python-3.12", "go-1.24", "python-3.12"}
+	if strings.Join(*languages, ",") != strings.Join(want, ",") {
+		t.Fatalf("judge saw %v, want %v", *languages, want)
 	}
 }

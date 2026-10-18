@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"code-sprout-cms/internal/platform/langs"
 )
 
 type Config struct {
@@ -60,6 +62,9 @@ type DeliveryConfig struct {
 type JudgeConfig struct {
 	URL    string
 	APIKey string
+	// Runtimes pins each language to an exact judge runtime id (defaults in langs, overridden
+	// by JUDGE_RUNTIMES="cpp=cpp-23,python=python-3.13").
+	Runtimes map[string]string
 }
 
 type StorageConfig struct {
@@ -108,7 +113,7 @@ func Load() (Config, error) {
 			Audience: req("AUTH_AUDIENCE"),
 		},
 
-		Judge:  JudgeConfig{URL: os.Getenv("JUDGE_URL"), APIKey: os.Getenv("JUDGE_API_KEY")},
+		Judge:  JudgeConfig{URL: os.Getenv("JUDGE_URL"), APIKey: os.Getenv("JUDGE_API_KEY"), Runtimes: judgeRuntimes(&errs)},
 		Search: SearchConfig{URL: os.Getenv("SEARCH_URL"), APIKey: os.Getenv("SEARCH_API_KEY"), Index: envOr("SEARCH_INDEX", "content")},
 		Delivery: DeliveryConfig{
 			RevalidateURL: os.Getenv("WEB_REVALIDATE_URL"), RevalidateSecret: os.Getenv("WEB_REVALIDATE_SECRET"),
@@ -176,4 +181,23 @@ func durationOr(key string, def time.Duration, errs *[]error) time.Duration {
 		return def
 	}
 	return d
+}
+
+// judgeRuntimes applies JUDGE_RUNTIMES overrides ("lang=runtime-id,…") to the default pins.
+func judgeRuntimes(errs *[]error) map[string]string {
+	out := langs.DefaultRuntimes()
+	for _, pair := range strings.Split(os.Getenv("JUDGE_RUNTIMES"), ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		lang, id, ok := strings.Cut(pair, "=")
+		lang, id = strings.TrimSpace(lang), strings.TrimSpace(id)
+		if !ok || id == "" || !langs.Runnable(lang) {
+			*errs = append(*errs, fmt.Errorf("JUDGE_RUNTIMES: %q is not lang=runtime-id for a runnable language", pair))
+			continue
+		}
+		out[lang] = id
+	}
+	return out
 }

@@ -97,15 +97,25 @@ var (
 )
 
 type Client struct {
-	base   string
-	apiKey string
-	http   *http.Client
+	base     string
+	apiKey   string
+	runtimes map[string]string
+	http     *http.Client
 }
 
 // New builds a client; an empty baseURL yields a client whose calls fail with ErrUnavailable
-// (local development without a judge).
-func New(baseURL, apiKey string) *Client {
-	return &Client{base: strings.TrimRight(baseURL, "/"), apiKey: apiKey, http: &http.Client{Timeout: 15 * time.Second}}
+// (local development without a judge). runtimes maps each language to the exact judge runtime
+// id it runs on; callers keep using plain language names.
+func New(baseURL, apiKey string, runtimes map[string]string) *Client {
+	return &Client{base: strings.TrimRight(baseURL, "/"), apiKey: apiKey, runtimes: runtimes, http: &http.Client{Timeout: 15 * time.Second}}
+}
+
+// pinned returns req with its language replaced by the pinned runtime id, when there is one.
+func (c *Client) pinned(req ExecuteRequest) ExecuteRequest {
+	if id, ok := c.runtimes[req.Language]; ok {
+		req.Language = id
+	}
+	return req
 }
 
 // Execute submits one job. idempotencyKey makes retries safe: the judge replays the original
@@ -114,7 +124,7 @@ func (c *Client) Execute(ctx context.Context, req ExecuteRequest, idempotencyKey
 	var out struct {
 		JobID string `json:"job_id"`
 	}
-	if err := c.do(ctx, http.MethodPost, "/execute", req, idempotencyKey, &out); err != nil {
+	if err := c.do(ctx, http.MethodPost, "/execute", c.pinned(req), idempotencyKey, &out); err != nil {
 		return "", err
 	}
 	return out.JobID, nil
@@ -136,8 +146,12 @@ func (c *Client) ExecuteBatch(ctx context.Context, reqs []ExecuteRequest, idempo
 			Error string `json:"error"`
 		} `json:"errors"`
 	}
+	pinned := make([]ExecuteRequest, len(reqs))
+	for i, r := range reqs {
+		pinned[i] = c.pinned(r)
+	}
 	// ls-judge takes the jobs as a bare JSON array and answers {accepted, errors} by index.
-	if err := c.do(ctx, http.MethodPost, "/batch/execute", reqs, idempotencyKey, &out); err != nil {
+	if err := c.do(ctx, http.MethodPost, "/batch/execute", pinned, idempotencyKey, &out); err != nil {
 		return nil, err
 	}
 	if len(out.Errors) > 0 {

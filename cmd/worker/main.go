@@ -71,7 +71,7 @@ func run() error {
 	engagements := engagement.NewService(database, rdb, reader, users, policy)
 	// Registers the PROBLEM publish hooks so scheduled problems publish correctly here too.
 	problems := problem.NewService(database, contents, reader, assets, policy)
-	submissions := submission.NewService(database, rdb, judge.New(cfg.Judge.URL, cfg.Judge.APIKey), problems, problems, reader)
+	submissions := submission.NewService(database, rdb, judge.New(cfg.Judge.URL, cfg.Judge.APIKey, cfg.Judge.Runtimes), problems, problems, reader)
 
 	// Outbox consumers: everything outside the database that mirrors content.
 	enqueue := func(ctx context.Context, topic string, id int64, payload any) error {

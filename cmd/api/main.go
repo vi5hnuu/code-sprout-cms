@@ -108,7 +108,7 @@ func run() error {
 	search.NewHandler(searchIndex, search.NewIndexer(searchIndex, reader, problems, enqueue), policy).Routes(api, auth.RequireUser,
 		limiter.Middleware("search", ratelimit.PerMinute(60, 20), clientIP))
 	problem.NewHandler(problems).Routes(api, auth.RequireUser)
-	submissions := submission.NewService(database, rdb, judge.New(cfg.Judge.URL, cfg.Judge.APIKey), problems, problems, reader)
+	submissions := submission.NewService(database, rdb, judge.New(cfg.Judge.URL, cfg.Judge.APIKey, cfg.Judge.Runtimes), problems, problems, reader)
 	submission.NewHandler(submissions, clientIP).Routes(api, auth.RequireUser, submission.Limits{
 		Runs:        limiter.Middleware("runs", ratelimit.PerMinute(20, 5), clientIP),
 		Submissions: limiter.Middleware("submissions", ratelimit.PerMinute(10, 3), clientIP),
