@@ -165,6 +165,8 @@ CREATE TABLE collection (
 -- Editorial collections own the public slug space; user LISTs are addressed by id.
 CREATE UNIQUE INDEX uq_collection_slug ON collection (kind, slug) WHERE kind <> 'LIST';
 CREATE INDEX idx_collection_owner ON collection (owner_id, updated_at DESC);
+-- Newest-first listings of study plans, series and courses (studio and public).
+CREATE INDEX idx_collection_editorial ON collection (kind, id DESC) WHERE kind <> 'LIST';
 
 CREATE TABLE collection_item (
     collection_id bigint      NOT NULL REFERENCES collection (id) ON DELETE CASCADE,

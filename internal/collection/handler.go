@@ -28,6 +28,7 @@ func (h *Handler) Routes(mux *http.ServeMux, authed func(http.Handler) http.Hand
 
 	me("GET /v1/studio/collections", h.editorial)
 
+	mux.Handle("GET /v1/public/collections", httpx.HandlerFunc(h.publicEditorial))
 	mux.Handle("GET /v1/public/collections/{kind}/{slug}", httpx.HandlerFunc(h.publicBySlug))
 	mux.Handle("GET /v1/public/lists/{id}", httpx.HandlerFunc(h.view))
 }
@@ -173,6 +174,21 @@ func (h *Handler) publicBySlug(w http.ResponseWriter, r *http.Request) error {
 	}
 	httpx.Public(w, 5*time.Minute, 24*time.Hour, "listings")
 	httpx.JSON(w, http.StatusOK, v)
+	return nil
+}
+
+// publicEditorial lists public study plans, series or courses: ?kind=study_plan|series|course.
+func (h *Handler) publicEditorial(w http.ResponseWriter, r *http.Request) error {
+	req, err := page.Parse[EditorialCursor](r)
+	if err != nil {
+		return err
+	}
+	res, err := h.svc.PublicEditorial(r.Context(), Kind(strings.ToUpper(r.URL.Query().Get("kind"))), req)
+	if err != nil {
+		return err
+	}
+	httpx.Public(w, 5*time.Minute, 24*time.Hour, "listings")
+	httpx.JSON(w, http.StatusOK, res)
 	return nil
 }
 

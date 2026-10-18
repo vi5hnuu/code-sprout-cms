@@ -61,6 +61,15 @@ JOIN collection_item i ON i.collection_id = c.id
 WHERE c.owner_id = $1 AND c.kind = 'LIST' AND i.content_id = $2;
 
 -- Editorial collections of one kind for the studio, newest first (any owner).
+-- Public study plans, series or courses for their index pages, newest first.
+-- name: ListPublicEditorialCollections :many
+SELECT c.*, (SELECT count(*) FROM collection_item i WHERE i.collection_id = c.id)::int AS item_count
+FROM collection c
+WHERE c.kind = sqlc.arg(kind) AND c.visibility = 'PUBLIC'
+  AND (sqlc.narg(after_id)::bigint IS NULL OR c.id < sqlc.narg(after_id))
+ORDER BY c.id DESC
+LIMIT sqlc.arg(row_limit);
+
 -- name: ListEditorialCollections :many
 SELECT c.*, (SELECT count(*) FROM collection_item i WHERE i.collection_id = c.id)::int AS item_count
 FROM collection c

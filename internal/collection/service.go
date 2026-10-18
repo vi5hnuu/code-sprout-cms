@@ -328,12 +328,42 @@ func (s *Service) Editorial(ctx context.Context, p auth.Principal, kind Kind, re
 	}
 	out := make([]Collection, len(rows))
 	for i, r := range rows {
-		n := r.ItemCount
-		out[i] = Collection{ID: r.ID, Kind: Kind(r.Kind), Slug: r.Slug, Title: r.Title, Description: r.Description,
-			OwnerID: r.OwnerID, Visibility: r.Visibility, ItemCount: &n, UpdatedAt: r.UpdatedAt}
+		out[i] = withCount(collectiondb.Collection{ID: r.ID, Kind: r.Kind, Slug: r.Slug, Title: r.Title, Description: r.Description,
+			OwnerID: r.OwnerID, Visibility: r.Visibility, UpdatedAt: r.UpdatedAt}, r.ItemCount)
 	}
-	return page.Build(out, req.Limit, func(c Collection) EditorialCursor { return EditorialCursor{ID: c.ID} }), nil
+	return page.Build(out, req.Limit, editorialCursor), nil
 }
+
+// PublicEditorial lists the PUBLIC study plans, series or courses for their index pages.
+func (s *Service) PublicEditorial(ctx context.Context, kind Kind, req page.Request[EditorialCursor]) (page.Page[Collection], error) {
+	if !kind.editorial() {
+		return page.Page[Collection]{}, errNotFound
+	}
+	var after *int64
+	if req.Key != nil {
+		after = &req.Key.ID
+	}
+	rows, err := collectiondb.New(s.db.Replica).ListPublicEditorialCollections(ctx, collectiondb.ListPublicEditorialCollectionsParams{
+		Kind: string(kind), AfterID: after, RowLimit: int32(req.Limit + 1),
+	})
+	if err != nil {
+		return page.Page[Collection]{}, err
+	}
+	out := make([]Collection, len(rows))
+	for i, r := range rows {
+		out[i] = withCount(collectiondb.Collection{ID: r.ID, Kind: r.Kind, Slug: r.Slug, Title: r.Title, Description: r.Description,
+			OwnerID: r.OwnerID, Visibility: r.Visibility, UpdatedAt: r.UpdatedAt}, r.ItemCount)
+	}
+	return page.Build(out, req.Limit, editorialCursor), nil
+}
+
+func withCount(c collectiondb.Collection, n int32) Collection {
+	out := fromRow(c)
+	out.ItemCount = &n
+	return out
+}
+
+func editorialCursor(c Collection) EditorialCursor { return EditorialCursor{ID: c.ID} }
 
 // Containing lists which of the caller's lists hold an item (for an "add to list" menu).
 func (s *Service) Containing(ctx context.Context, p auth.Principal, contentID int64) ([]int64, error) {

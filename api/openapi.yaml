@@ -1801,6 +1801,29 @@ paths:
         "204": { description: Reordered }
         "400": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
+  /v1/public/collections:
+    get:
+      tags: [library]
+      operationId: listPublicEditorialCollections
+      summary: Public study plans, series or courses, newest first (for their index pages).
+      security: []
+      parameters:
+        - { name: kind, in: query, required: true, schema: { type: string, enum: [series, course, study_plan] } }
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200":
+          description: Page of collections
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/Collection" } }
+                  nextCursor: { type: [string, "null"] }
+        "400": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
   /v1/public/collections/{kind}/{slug}:
     get:
       tags: [library]
