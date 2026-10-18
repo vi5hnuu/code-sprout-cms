@@ -9,6 +9,7 @@ import (
 	"code-sprout-cms/internal/platform/apperr"
 	"code-sprout-cms/internal/platform/db"
 	"code-sprout-cms/internal/platform/page"
+	"code-sprout-cms/internal/problem"
 	"code-sprout-cms/internal/submission/submissiondb"
 )
 
@@ -71,7 +72,8 @@ type ReviewCursor struct {
 }
 
 type ReviewItem struct {
-	Problem content.ListItem `json:"problem"`
+	Problem    content.ListItem   `json:"problem"`
+	Difficulty problem.Difficulty `json:"difficulty"`
 	// Step counts the intervals passed so far (0 = first review); Steps is how many there are.
 	Step  int       `json:"step"`
 	Steps int       `json:"steps"`
@@ -129,10 +131,14 @@ func (s *Service) Reviews(ctx context.Context, p auth.Principal, due bool, req p
 	for _, it := range items {
 		byID[it.ID] = it
 	}
+	diffs, err := s.diffs.Difficulties(ctx, ids)
+	if err != nil {
+		return ReviewPage{}, err
+	}
 	out := ReviewPage{Page: page.Page[ReviewItem]{Items: make([]ReviewItem, 0, len(pg.Items)), NextCursor: pg.NextCursor}}
 	for _, r := range pg.Items {
 		if it, ok := byID[r.problemID]; ok { // unpublished problems drop out quietly
-			out.Items = append(out.Items, ReviewItem{Problem: it, Step: int(r.step), Steps: len(reviewIntervals), DueAt: r.dueAt})
+			out.Items = append(out.Items, ReviewItem{Problem: it, Difficulty: diffs[r.problemID], Step: int(r.step), Steps: len(reviewIntervals), DueAt: r.dueAt})
 		}
 	}
 	if out.DueCount, err = q.CountDueReviews(ctx, p.UserID); err != nil {

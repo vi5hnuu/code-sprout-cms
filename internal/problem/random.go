@@ -4,7 +4,6 @@ import (
 	"context"
 	"math/rand/v2"
 
-	"code-sprout-cms/internal/content"
 	"code-sprout-cms/internal/platform/apperr"
 	"code-sprout-cms/internal/platform/db"
 	"code-sprout-cms/internal/problem/problemdb"
@@ -24,9 +23,9 @@ var errNoRandom = apperr.NotFound("problem.none_match", "No problem matches thes
 // match at or after it, wrapping to the smallest: two index lookups whatever the catalogue
 // size. Problems that follow a gap in the id space are a little more likely to come up; for
 // "surprise me" that is fine, and it avoids reading every row as ORDER BY random() would.
-func (s *Service) Random(ctx context.Context, f RandomFilter) (content.ListItem, error) {
+func (s *Service) Random(ctx context.Context, f RandomFilter) (ListItem, error) {
 	if f.Difficulty != nil && !f.Difficulty.valid() {
-		return content.ListItem{}, apperr.ValidationFailed(map[string]string{"difficulty": "difficulty must be EASY, MEDIUM or HARD."})
+		return ListItem{}, apperr.ValidationFailed(map[string]string{"difficulty": "difficulty must be EASY, MEDIUM or HARD."})
 	}
 	q := problemdb.New(s.db.Replica)
 	var diff *string
@@ -41,11 +40,11 @@ func (s *Service) Random(ctx context.Context, f RandomFilter) (content.ListItem,
 	case f.Tag != "":
 		tag, err := s.reader.ResolveTag(ctx, f.Tag)
 		if err != nil {
-			return content.ListItem{}, err
+			return ListItem{}, err
 		}
 		b, err := q.TaggedIDBounds(ctx, tag.ID)
 		if err != nil {
-			return content.ListItem{}, err
+			return ListItem{}, err
 		}
 		lo, hi = b.Lo, b.Hi
 		from = func(p int64) (int64, error) {
@@ -54,7 +53,7 @@ func (s *Service) Random(ctx context.Context, f RandomFilter) (content.ListItem,
 	case diff != nil:
 		b, err := q.ListedIDBoundsByDifficulty(ctx, *diff)
 		if err != nil {
-			return content.ListItem{}, err
+			return ListItem{}, err
 		}
 		lo, hi = b.Lo, b.Hi
 		from = func(p int64) (int64, error) {
@@ -63,13 +62,13 @@ func (s *Service) Random(ctx context.Context, f RandomFilter) (content.ListItem,
 	default:
 		b, err := q.ListedIDBounds(ctx)
 		if err != nil {
-			return content.ListItem{}, err
+			return ListItem{}, err
 		}
 		lo, hi = b.Lo, b.Hi
 		from = func(p int64) (int64, error) { return q.ListedProblemFrom(ctx, p) }
 	}
 	if hi == 0 {
-		return content.ListItem{}, errNoRandom
+		return ListItem{}, errNoRandom
 	}
 
 	id, err := from(lo + rand.Int64N(hi-lo+1))
@@ -77,18 +76,17 @@ func (s *Service) Random(ctx context.Context, f RandomFilter) (content.ListItem,
 		id, err = from(lo)
 	}
 	if db.IsNoRows(err) {
-		return content.ListItem{}, errNoRandom
+		return ListItem{}, errNoRandom
 	}
 	if err != nil {
-		return content.ListItem{}, err
+		return ListItem{}, err
 	}
-	items, err := s.reader.ItemsByID(ctx, []int64{id})
+	item, ok, err := s.liveItem(ctx, id)
 	if err != nil {
-		return content.ListItem{}, err
+		return ListItem{}, err
 	}
-	if len(items) == 0 {
-		return content.ListItem{}, errNoRandom
+	if !ok {
+		return ListItem{}, errNoRandom
 	}
-	return items[0], nil
+	return item, nil
 }
-

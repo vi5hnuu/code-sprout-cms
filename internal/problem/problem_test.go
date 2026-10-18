@@ -147,8 +147,8 @@ func TestRandomPicksListedProblems(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if item.Type != "PROBLEM" {
-			t.Fatalf("random pick is a %s", item.Type)
+		if item.Type != "PROBLEM" || item.Difficulty == "" {
+			t.Fatalf("random pick = %s with difficulty %q", item.Type, item.Difficulty)
 		}
 	}
 	if _, err := e.Problems.Random(ctx, problem.RandomFilter{Tag: "company:" + testenv.Unique("nobody")}); err == nil {

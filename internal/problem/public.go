@@ -145,16 +145,29 @@ func (s *Service) Today(ctx context.Context) (ListItem, error) {
 	if err != nil {
 		return ListItem{}, err
 	}
-	live, err := s.reader.ItemsByID(ctx, []int64{potd.ProblemID})
+	item, ok, err := s.liveItem(ctx, potd.ProblemID)
 	if err != nil {
 		return ListItem{}, err
 	}
-	if len(live) == 0 {
+	if !ok {
 		return ListItem{}, apperr.NotFound("problem.no_problem_of_day", "No problem of the day today.")
 	}
-	ext, err := problemdb.New(s.db.Replica).GetProblemExt(ctx, potd.ProblemID)
-	if err != nil {
-		return ListItem{}, err
+	return item, nil
+}
+
+// liveItem is one live problem as listings show it (with difficulty and acceptance); ok is
+// false when it is not live.
+func (s *Service) liveItem(ctx context.Context, id int64) (ListItem, bool, error) {
+	live, err := s.reader.ItemsByID(ctx, []int64{id})
+	if err != nil || len(live) == 0 {
+		return ListItem{}, false, err
 	}
-	return ListItem{ListItem: live[0], Difficulty: Difficulty(ext.Difficulty), AcceptanceRate: acceptance(ext.SubmissionCount, ext.AcceptedCount)}, nil
+	ext, err := problemdb.New(s.db.Replica).GetProblemExt(ctx, id)
+	if db.IsNoRows(err) {
+		return ListItem{}, false, nil
+	}
+	if err != nil {
+		return ListItem{}, false, err
+	}
+	return ListItem{ListItem: live[0], Difficulty: Difficulty(ext.Difficulty), AcceptanceRate: acceptance(ext.SubmissionCount, ext.AcceptedCount)}, true, nil
 }
