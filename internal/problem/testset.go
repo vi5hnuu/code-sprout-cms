@@ -49,6 +49,11 @@ func ReadTestSet(r io.Reader, collect bool) (cases []judge.TestCase, count int, 
 		if len(*line.Input) > maxCaseBytes || len(*line.Output) > maxCaseBytes {
 			return nil, count, fmt.Errorf("%w: case %d: input or output exceeds 16 MiB", ErrBadTestSet, count)
 		}
+		// The judge receives each case JSON-encoded inside a size-capped request.
+		if judge.CaseSize(judge.TestCase{Stdin: *line.Input, Expected: *line.Output}) > judge.MaxCaseBytes {
+			return nil, count, fmt.Errorf("%w: case %d: input and output together are too large for the judge (%d MiB encoded at most)",
+				ErrBadTestSet, count, judge.MaxCaseBytes>>20)
+		}
 		if collect {
 			held += len(*line.Input) + len(*line.Output)
 			if held > maxSetMemBytes {

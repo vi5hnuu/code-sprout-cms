@@ -83,9 +83,23 @@ func (s *Service) judgeSubmission(ctx context.Context, sub submissiondb.Submissi
 		return err
 	}
 
+	// The plan is a pure function of the cases and the code, so a resumed submission maps its
+	// recorded jobs back to the same case ranges.
+	source := SourceFor(spec, sub.Language, sub.Code)
+	spans, err := judge.PlanJobs(cases, source)
+	if errors.Is(err, judge.ErrCaseTooLarge) {
+		return s.fail(ctx, sub, "A test case of this problem is too large to judge. Please report the problem.")
+	}
+	if err != nil {
+		return err
+	}
 	jobs := sub.JudgeJobs
+	// Jobs recorded under a different plan cannot be mapped to cases: judge afresh.
+	if len(jobs) != len(spans) {
+		jobs = nil
+	}
 	if len(jobs) == 0 {
-		if jobs, err = s.dispatch(ctx, sub, spec, cases); err != nil {
+		if jobs, err = s.dispatch(ctx, sub, source, spec, cases, spans); err != nil {
 			return err
 		}
 		if err := submissiondb.New(s.db.Primary).SetSubmissionJobs(ctx, submissiondb.SetSubmissionJobsParams{
@@ -99,7 +113,7 @@ func (s *Service) judgeSubmission(ctx context.Context, sub submissiondb.Submissi
 	if err != nil {
 		return err
 	}
-	out := aggregate(results, len(cases), len(spec.Samples))
+	out := aggregate(results, spans, len(cases), len(spec.Samples))
 	if out.verdict == judge.VerdictIE {
 		// Forget these jobs so the retry dispatches fresh ones rather than re-reading failures.
 		if err := submissiondb.New(s.db.Primary).SetSubmissionJobs(ctx, submissiondb.SetSubmissionJobsParams{
@@ -121,25 +135,25 @@ func SourceFor(spec problem.JudgeSpec, language, code string) string {
 	return code
 }
 
-// dispatch splits the cases into judge jobs (≤100 cases each), sent in batches of ≤20 jobs.
-// Idempotency keys cover the submission, attempt and batch: a failed batch call retried within
-// the attempt cannot create duplicate jobs, while a new attempt (after a judge error) gets
-// fresh jobs. A runner that crashes between dispatching and recording the job ids re-runs the
-// tests on its next attempt: wasted work, never a wrong verdict.
-func (s *Service) dispatch(ctx context.Context, sub submissiondb.Submission, spec problem.JudgeSpec, cases []judge.TestCase) ([]string, error) {
-	source := SourceFor(spec, sub.Language, sub.Code)
-	var reqs []judge.ExecuteRequest
-	for start := 0; start < len(cases); start += judge.MaxCasesPerJob {
-		end := min(start+judge.MaxCasesPerJob, len(cases))
-		reqs = append(reqs, judge.ExecuteRequest{
-			Language: sub.Language, Code: source, TimeLimitMs: spec.TimeLimitMs, MemLimitMB: spec.MemoryMB, TestCases: cases[start:end],
-		})
+// dispatch sends the cases as judge jobs planned by judge.PlanJobs (by case count and encoded
+// size), in /batch/execute calls planned by judge.PlanBatches. Idempotency keys cover the
+// submission, attempt and batch: a failed batch call retried within the attempt cannot create
+// duplicate jobs, while a new attempt (after a judge error) gets fresh jobs. A runner that
+// crashes between dispatching and recording the job ids re-runs the tests on its next
+// attempt: wasted work, never a wrong verdict.
+func (s *Service) dispatch(ctx context.Context, sub submissiondb.Submission, source string, spec problem.JudgeSpec, cases []judge.TestCase, spans []judge.Span) ([]string, error) {
+	reqs := make([]judge.ExecuteRequest, len(spans))
+	sizes := make([]int, len(spans))
+	for i, sp := range spans {
+		reqs[i] = judge.ExecuteRequest{
+			Language: sub.Language, Code: source, TimeLimitMs: spec.TimeLimitMs, MemLimitMB: spec.MemoryMB, TestCases: cases[sp.Start:sp.End],
+		}
+		sizes[i] = judge.JobSize(cases, source, sp)
 	}
 	var jobs []string
-	for b, start := 0, 0; start < len(reqs); b, start = b+1, start+judge.MaxJobsPerBatch {
-		end := min(start+judge.MaxJobsPerBatch, len(reqs))
+	for b, batch := range judge.PlanBatches(sizes) {
 		key := fmt.Sprintf("submission-%d-%d-attempt-%d-batch-%d", sub.UserID, sub.ID, sub.Attempts, b)
-		ids, err := s.judge.ExecuteBatch(ctx, reqs[start:end], key)
+		ids, err := s.judge.ExecuteBatch(ctx, reqs[batch.Start:batch.End], key)
 		if err != nil {
 			return nil, err
 		}
@@ -187,11 +201,11 @@ func (s *Service) await(ctx context.Context, jobs []string) ([]judge.JobResult, 
 // aggregate folds per-job results into one verdict, in case order: the first case that did not
 // pass decides the verdict, the slowest case gives the time. Only a failing *sample* is pointed
 // out to the user; hidden cases stay hidden.
-func aggregate(jobs []judge.JobResult, total, samples int) outcome {
+func aggregate(jobs []judge.JobResult, spans []judge.Span, total, samples int) outcome {
 	out := outcome{verdict: judge.VerdictAC, total: total}
 	var slowest *int
-	offset := 0
-	for _, j := range jobs {
+	for n, j := range jobs {
+		offset := spans[n].Start
 		if j.Status == judge.JobFailed {
 			return outcome{verdict: judge.VerdictIE, total: total}
 		}
@@ -216,7 +230,6 @@ func aggregate(jobs []judge.JobResult, total, samples int) outcome {
 				}
 			}
 		}
-		offset += judge.MaxCasesPerJob
 	}
 	if out.verdict == judge.VerdictCE {
 		out.passed = 0
