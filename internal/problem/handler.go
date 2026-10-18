@@ -31,6 +31,7 @@ func (h *Handler) Routes(mux *http.ServeMux, authed func(http.Handler) http.Hand
 	studio("PUT /v1/admin/problem-of-the-day/{date}", h.scheduleOfDay)
 
 	mux.Handle("GET /v1/public/problems", httpx.HandlerFunc(h.list))
+	mux.Handle("GET /v1/public/random-problem", httpx.HandlerFunc(h.random))
 	mux.Handle("GET /v1/public/problems/{slug}", httpx.HandlerFunc(h.page))
 	mux.Handle("GET /v1/public/problems/{id}/hints", httpx.HandlerFunc(h.hints))
 	mux.Handle("GET /v1/public/problem-of-the-day", httpx.HandlerFunc(h.today))
@@ -227,6 +228,23 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 	}
 	httpx.Public(w, time.Minute, time.Hour, "listings")
 	httpx.JSON(w, http.StatusOK, res)
+	return nil
+}
+
+// random: one listed problem, ?difficulty= and ?tag=kind:slug optional. Never cached: every
+// call should pick again.
+func (h *Handler) random(w http.ResponseWriter, r *http.Request) error {
+	f := RandomFilter{Tag: r.URL.Query().Get("tag")}
+	if d := r.URL.Query().Get("difficulty"); d != "" {
+		diff := Difficulty(d)
+		f.Difficulty = &diff
+	}
+	item, err := h.svc.Random(r.Context(), f)
+	if err != nil {
+		return err
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	httpx.JSON(w, http.StatusOK, item)
 	return nil
 }
 

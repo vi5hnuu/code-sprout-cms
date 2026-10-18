@@ -101,3 +101,36 @@ ON CONFLICT (day) DO UPDATE SET problem_id = EXCLUDED.problem_id, scheduled_by =
 
 -- name: GetProblemOfDay :one
 SELECT * FROM problem_of_day WHERE day = $1;
+
+-- ── Random pick (problem/random.go): bounds, then the first listed id at or after a pivot ──
+
+-- name: ListedIDBounds :one
+SELECT coalesce(min(content_id), 0)::bigint AS lo, coalesce(max(content_id), 0)::bigint AS hi FROM problem_ext WHERE listed_at IS NOT NULL;
+
+-- name: ListedIDBoundsByDifficulty :one
+SELECT coalesce(min(content_id), 0)::bigint AS lo, coalesce(max(content_id), 0)::bigint AS hi FROM problem_ext
+WHERE listed_at IS NOT NULL AND difficulty = $1;
+
+-- name: ListedProblemFrom :one
+SELECT content_id FROM problem_ext
+WHERE listed_at IS NOT NULL AND content_id >= $1
+ORDER BY content_id LIMIT 1;
+
+-- name: ListedProblemFromByDifficulty :one
+SELECT content_id FROM problem_ext
+WHERE listed_at IS NOT NULL AND difficulty = sqlc.arg(difficulty) AND content_id >= sqlc.arg(pivot)
+ORDER BY content_id LIMIT 1;
+
+-- Tagged picks walk the tag's own index (content_tag primary key) in id order and keep the
+-- first listed problem; difficulty, when given, is a filter on that walk.
+-- name: TaggedIDBounds :one
+SELECT coalesce(min(content_id), 0)::bigint AS lo, coalesce(max(content_id), 0)::bigint AS hi FROM content_tag
+WHERE tag_id = $1 AND published_at IS NOT NULL;
+
+-- name: TaggedProblemFrom :one
+SELECT ct.content_id FROM content_tag ct
+JOIN problem_ext pe ON pe.content_id = ct.content_id
+WHERE ct.tag_id = sqlc.arg(tag_id) AND ct.published_at IS NOT NULL AND ct.content_id >= sqlc.arg(pivot)
+  AND pe.listed_at IS NOT NULL
+  AND (sqlc.narg(difficulty)::text IS NULL OR pe.difficulty = sqlc.narg(difficulty)::text)
+ORDER BY ct.content_id LIMIT 1;

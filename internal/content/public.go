@@ -230,6 +230,15 @@ type ListFilter struct {
 }
 
 // List returns live, PUBLIC items newest first.
+// ResolveTag finds a tag from its kind:slug form (e.g. topic:arrays), as list filters name it.
+func (r *Reader) ResolveTag(ctx context.Context, kindSlug string) (taxonomy.Tag, error) {
+	kind, slug, ok := strings.Cut(kindSlug, ":")
+	if !ok {
+		return taxonomy.Tag{}, apperr.Invalid("content.list_filter", "tag must be kind:slug, e.g. topic:arrays.")
+	}
+	return r.taxonomy.TagBySlug(ctx, taxonomy.TagKind(strings.ToUpper(kind)), slug)
+}
+
 func (r *Reader) List(ctx context.Context, f ListFilter, req page.Request[PublishedCursor]) (page.Page[ListItem], error) {
 	set := 0
 	for _, v := range []string{f.Category, f.Tag, f.Author} {
@@ -269,11 +278,7 @@ func (r *Reader) List(ctx context.Context, f ListFilter, req page.Request[Publis
 			CategoryID: &cat.ID, Type: typ, AfterPublished: afterPub, AfterID: afterID, RowLimit: limit,
 		})
 	case f.Tag != "":
-		kind, slug, ok := strings.Cut(f.Tag, ":")
-		if !ok {
-			return page.Page[ListItem]{}, apperr.Invalid("content.list_filter", "tag must be kind:slug, e.g. topic:arrays.")
-		}
-		tag, terr := r.taxonomy.TagBySlug(ctx, taxonomy.TagKind(strings.ToUpper(kind)), slug)
+		tag, terr := r.ResolveTag(ctx, f.Tag)
 		if terr != nil {
 			return page.Page[ListItem]{}, terr
 		}

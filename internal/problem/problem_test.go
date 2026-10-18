@@ -131,3 +131,31 @@ func TestPublishedProblemLifecycle(t *testing.T) {
 		t.Fatalf("today = %+v, %v", today.ID, err)
 	}
 }
+
+// A random pick is always a listed problem, and filters that match nothing say so.
+func TestRandomPicksListedProblems(t *testing.T) {
+	e := arenatest.New(t)
+	ctx := context.Background()
+	// Packages share the test database, so a pick may be another test's problem; what matters
+	// is that it is always a listed problem.
+	for range 3 {
+		tag := testenv.Unique("rnd")
+		e.Publish(tag, []problem.Sample{{Input: "1", Output: "1"}}, []judge.TestCase{{Stdin: tag, Expected: "1"}}, nil)
+	}
+	for range 20 {
+		item, err := e.Problems.Random(ctx, problem.RandomFilter{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if item.Type != "PROBLEM" {
+			t.Fatalf("random pick is a %s", item.Type)
+		}
+	}
+	if _, err := e.Problems.Random(ctx, problem.RandomFilter{Tag: "company:" + testenv.Unique("nobody")}); err == nil {
+		t.Fatal("unknown tag must not pick anything")
+	}
+	bad := problem.Difficulty("IMPOSSIBLE")
+	if _, err := e.Problems.Random(ctx, problem.RandomFilter{Difficulty: &bad}); err == nil {
+		t.Fatal("invalid difficulty accepted")
+	}
+}

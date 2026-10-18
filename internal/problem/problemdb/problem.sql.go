@@ -460,6 +460,72 @@ func (q *Queries) ListTestSets(ctx context.Context, problemID int64) ([]TestSet,
 	return items, nil
 }
 
+const listedIDBounds = `-- name: ListedIDBounds :one
+
+SELECT coalesce(min(content_id), 0)::bigint AS lo, coalesce(max(content_id), 0)::bigint AS hi FROM problem_ext WHERE listed_at IS NOT NULL
+`
+
+type ListedIDBoundsRow struct {
+	Lo int64
+	Hi int64
+}
+
+// ── Random pick (problem/random.go): bounds, then the first listed id at or after a pivot ──
+func (q *Queries) ListedIDBounds(ctx context.Context) (ListedIDBoundsRow, error) {
+	row := q.db.QueryRow(ctx, listedIDBounds)
+	var i ListedIDBoundsRow
+	err := row.Scan(&i.Lo, &i.Hi)
+	return i, err
+}
+
+const listedIDBoundsByDifficulty = `-- name: ListedIDBoundsByDifficulty :one
+SELECT coalesce(min(content_id), 0)::bigint AS lo, coalesce(max(content_id), 0)::bigint AS hi FROM problem_ext
+WHERE listed_at IS NOT NULL AND difficulty = $1
+`
+
+type ListedIDBoundsByDifficultyRow struct {
+	Lo int64
+	Hi int64
+}
+
+func (q *Queries) ListedIDBoundsByDifficulty(ctx context.Context, difficulty string) (ListedIDBoundsByDifficultyRow, error) {
+	row := q.db.QueryRow(ctx, listedIDBoundsByDifficulty, difficulty)
+	var i ListedIDBoundsByDifficultyRow
+	err := row.Scan(&i.Lo, &i.Hi)
+	return i, err
+}
+
+const listedProblemFrom = `-- name: ListedProblemFrom :one
+SELECT content_id FROM problem_ext
+WHERE listed_at IS NOT NULL AND content_id >= $1
+ORDER BY content_id LIMIT 1
+`
+
+func (q *Queries) ListedProblemFrom(ctx context.Context, contentID int64) (int64, error) {
+	row := q.db.QueryRow(ctx, listedProblemFrom, contentID)
+	var content_id int64
+	err := row.Scan(&content_id)
+	return content_id, err
+}
+
+const listedProblemFromByDifficulty = `-- name: ListedProblemFromByDifficulty :one
+SELECT content_id FROM problem_ext
+WHERE listed_at IS NOT NULL AND difficulty = $1 AND content_id >= $2
+ORDER BY content_id LIMIT 1
+`
+
+type ListedProblemFromByDifficultyParams struct {
+	Difficulty string
+	Pivot      int64
+}
+
+func (q *Queries) ListedProblemFromByDifficulty(ctx context.Context, arg ListedProblemFromByDifficultyParams) (int64, error) {
+	row := q.db.QueryRow(ctx, listedProblemFromByDifficulty, arg.Difficulty, arg.Pivot)
+	var content_id int64
+	err := row.Scan(&content_id)
+	return content_id, err
+}
+
 const nextTestSetVersion = `-- name: NextTestSetVersion :one
 
 SELECT (COALESCE(max(version), 0) + 1)::int FROM test_set WHERE problem_id = $1
@@ -515,6 +581,47 @@ type SetListedAtParams struct {
 func (q *Queries) SetListedAt(ctx context.Context, arg SetListedAtParams) error {
 	_, err := q.db.Exec(ctx, setListedAt, arg.ListedAt, arg.ContentID)
 	return err
+}
+
+const taggedIDBounds = `-- name: TaggedIDBounds :one
+SELECT coalesce(min(content_id), 0)::bigint AS lo, coalesce(max(content_id), 0)::bigint AS hi FROM content_tag
+WHERE tag_id = $1 AND published_at IS NOT NULL
+`
+
+type TaggedIDBoundsRow struct {
+	Lo int64
+	Hi int64
+}
+
+// Tagged picks walk the tag's own index (content_tag primary key) in id order and keep the
+// first listed problem; difficulty, when given, is a filter on that walk.
+func (q *Queries) TaggedIDBounds(ctx context.Context, tagID int64) (TaggedIDBoundsRow, error) {
+	row := q.db.QueryRow(ctx, taggedIDBounds, tagID)
+	var i TaggedIDBoundsRow
+	err := row.Scan(&i.Lo, &i.Hi)
+	return i, err
+}
+
+const taggedProblemFrom = `-- name: TaggedProblemFrom :one
+SELECT ct.content_id FROM content_tag ct
+JOIN problem_ext pe ON pe.content_id = ct.content_id
+WHERE ct.tag_id = $1 AND ct.published_at IS NOT NULL AND ct.content_id >= $2
+  AND pe.listed_at IS NOT NULL
+  AND ($3::text IS NULL OR pe.difficulty = $3::text)
+ORDER BY ct.content_id LIMIT 1
+`
+
+type TaggedProblemFromParams struct {
+	TagID      int64
+	Pivot      int64
+	Difficulty *string
+}
+
+func (q *Queries) TaggedProblemFrom(ctx context.Context, arg TaggedProblemFromParams) (int64, error) {
+	row := q.db.QueryRow(ctx, taggedProblemFrom, arg.TagID, arg.Pivot, arg.Difficulty)
+	var content_id int64
+	err := row.Scan(&content_id)
+	return content_id, err
 }
 
 const updateProblemSettings = `-- name: UpdateProblemSettings :exec
