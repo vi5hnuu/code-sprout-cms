@@ -43,14 +43,54 @@ func TestClientIP(t *testing.T) {
 	req.RemoteAddr = "10.0.0.1:5000"
 	req.Header.Set("CF-Connecting-IP", "203.0.113.7")
 
-	if got := ClientIPFrom("")(req); got != "10.0.0.1" {
+	if got := ClientIPFrom("", "")(req); got != "10.0.0.1" {
 		t.Fatalf("untrusted header must be ignored, got %q", got)
 	}
-	if got := ClientIPFrom("CF-Connecting-IP")(req); got != "203.0.113.7" {
+	if got := ClientIPFrom("CF-Connecting-IP", "")(req); got != "203.0.113.7" {
 		t.Fatalf("trusted header not used, got %q", got)
 	}
 	req.Header.Set("CF-Connecting-IP", "not-an-ip")
-	if got := ClientIPFrom("CF-Connecting-IP")(req); got != "10.0.0.1" {
+	if got := ClientIPFrom("CF-Connecting-IP", "")(req); got != "10.0.0.1" {
 		t.Fatalf("garbage header must fall back to peer, got %q", got)
+	}
+}
+
+func TestClientIPFromInternalProxy(t *testing.T) {
+	resolve := ClientIPFrom("", "s3cret")
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "10.0.0.9:5000" // the web server
+	req.Header.Set(ClientIPHeader, "198.51.100.4")
+
+	if got := resolve(req); got != "10.0.0.9" {
+		t.Fatalf("client IP without proof must be ignored, got %q", got)
+	}
+	req.Header.Set(InternalProxyHeader, "wrong")
+	if got := resolve(req); got != "10.0.0.9" {
+		t.Fatalf("wrong proof must be ignored, got %q", got)
+	}
+	req.Header.Set(InternalProxyHeader, "s3cret")
+	if got := resolve(req); got != "198.51.100.4" {
+		t.Fatalf("proven request must use the relayed client IP, got %q", got)
+	}
+	req.Header.Del(ClientIPHeader)
+	if got := resolve(req); got != "" {
+		t.Fatalf("proven request without a client is unattributed, got %q", got)
+	}
+	if got := ClientIPFrom("", "")(req); got != "10.0.0.9" {
+		t.Fatalf("with no secret configured the proof header means nothing, got %q", got)
+	}
+}
+
+func TestMiddlewareSkipsUnattributedServerTraffic(t *testing.T) {
+	l := New(testenv.Redis(t))
+	name := fmt.Sprintf("test-unattributed-%d", time.Now().UnixNano())
+	h := l.Middleware(name, Limit{Rate: 1, Period: time.Hour, Burst: 1}, func(*http.Request) string { return "" })(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	for i := range 5 {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("request %d from unattributed server traffic was limited (%d)", i+1, rec.Code)
+		}
 	}
 }

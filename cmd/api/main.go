@@ -79,7 +79,7 @@ func run() error {
 	reader := content.NewReader(database, assets, taxonomies, users, engagement.NewStatsReader(database))
 	engagements := engagement.NewService(database, rdb, reader, users, policy)
 	limiter := ratelimit.New(rdb)
-	clientIP := ratelimit.ClientIPFrom(cfg.TrustedClientIPHeader)
+	clientIP := ratelimit.ClientIPFrom(cfg.TrustedClientIPHeader, cfg.InternalProxySecret)
 
 	api := http.NewServeMux()
 	user.NewHandler(users).Routes(api, auth.RequireUser)

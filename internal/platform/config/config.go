@@ -22,6 +22,9 @@ type Config struct {
 	// Header carrying the real client IP when running behind a CDN/proxy (e.g.
 	// CF-Connecting-IP). Empty means use the socket peer, which is right with no proxy.
 	TrustedClientIPHeader string
+	// Shared secret the web server sends (X-Internal-Proxy) to have its relayed client address
+	// (X-Client-IP) trusted. Empty disables the mechanism.
+	InternalProxySecret string
 	// Browser origins allowed to call the API with credentials (the Next.js site).
 	CORSOrigins []string
 
@@ -98,6 +101,7 @@ func Load() (Config, error) {
 		ShutdownTimeout: durationOr("SHUTDOWN_TIMEOUT", 20*time.Second, &errs),
 
 		TrustedClientIPHeader: os.Getenv("TRUSTED_CLIENT_IP_HEADER"),
+		InternalProxySecret:   os.Getenv("INTERNAL_PROXY_SECRET"),
 		CORSOrigins:           listOr("CORS_ORIGINS"),
 
 		DatabaseURL:        req("DATABASE_URL"),
