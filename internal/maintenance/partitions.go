@@ -3,6 +3,7 @@ package maintenance
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -22,12 +23,9 @@ const monthsAhead = 3
 // KeepPartitionsAhead ensures the current and next months' partitions exist, at startup and
 // then daily. Creation is idempotent, so concurrent workers are harmless.
 func KeepPartitionsAhead(ctx context.Context, primary *pgxpool.Pool) {
-	q := maintenancedb.New(primary)
 	ensure := func() {
-		for _, table := range monthlyPartitioned {
-			if err := q.EnsureMonthlyPartitions(ctx, maintenancedb.EnsureMonthlyPartitionsParams{Parent: table, Months: monthsAhead + 1}); err != nil && ctx.Err() == nil {
-				slog.Error("ensure partitions", "table", table, "err", err)
-			}
+		if err := EnsurePartitions(ctx, primary); err != nil && ctx.Err() == nil {
+			slog.Error("ensure partitions", "err", err)
 		}
 	}
 	ensure()
@@ -41,4 +39,17 @@ func KeepPartitionsAhead(ctx context.Context, primary *pgxpool.Pool) {
 			ensure()
 		}
 	}
+}
+
+// EnsurePartitions creates any missing monthly partitions from this month to monthsAhead.
+// Every table is attempted; the first failure is returned after the rest were tried.
+func EnsurePartitions(ctx context.Context, primary *pgxpool.Pool) error {
+	q := maintenancedb.New(primary)
+	var first error
+	for _, table := range monthlyPartitioned {
+		if err := q.EnsureMonthlyPartitions(ctx, maintenancedb.EnsureMonthlyPartitionsParams{Parent: table, Months: monthsAhead + 1}); err != nil && first == nil {
+			first = fmt.Errorf("%s: %w", table, err)
+		}
+	}
+	return first
 }
