@@ -1913,6 +1913,10 @@ paths:
       security: []
       parameters:
         - { name: kind, in: query, required: true, schema: { type: string, enum: [series, course, study_plan] } }
+        - name: source
+          in: query
+          description: Only collections mirrored from this source (youtube = the channel's playlists).
+          schema: { type: string, enum: [youtube] }
         - { $ref: "#/components/parameters/Cursor" }
         - { $ref: "#/components/parameters/Limit" }
       responses:
@@ -3010,6 +3014,7 @@ components:
         visibility: { type: string, enum: [PUBLIC, UNLISTED, PRIVATE] }
         itemCount: { type: integer }
         updatedAt: { type: string, format: date-time }
+        source: { type: string, description: "Set on collections mirrored from outside, e.g. YOUTUBE for a playlist." }
 
     SearchResult:
       type: object

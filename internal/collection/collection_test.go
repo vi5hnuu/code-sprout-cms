@@ -2,6 +2,7 @@ package collection_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"code-sprout-cms/internal/access"
@@ -113,5 +114,56 @@ func TestNotes(t *testing.T) {
 	}
 	if _, err := notes.Get(ctx, u, a); err == nil {
 		t.Fatal("note survived deletion")
+	}
+}
+
+// Mirrored collections (YouTube playlists) are listed by source; other series stay out of that list.
+func TestPublicEditorialBySource(t *testing.T) {
+	e := arenatest.New(t)
+	svc := collection.NewService(e.DB, e.Reader, access.NewPolicy(e.DB.Primary))
+	ctx := context.Background()
+	a, _ := publishTwo(t, e)
+	owner := testenv.User(t, e.DB)
+	editor := testenv.User(t, e.DB)
+	testenv.Grant(t, e.DB, editor, "EDITOR", nil)
+	plain, err := svc.Create(ctx, editor, collection.Input{Kind: collection.KindSeries, Slug: testenv.Unique("plain"), Title: "Plain", Visibility: "PUBLIC"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A source unique to this run keeps parallel tests and earlier runs out of the result.
+	source := "T" + strings.ToUpper(strings.ReplaceAll(testenv.Unique("src"), "-", "_"))
+	tx, err := e.DB.Primary.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slug := testenv.Unique("pl")
+	id, err := svc.UpsertMirrored(ctx, tx, owner.UserID, collection.Mirrored{
+		Source: source, ExternalRef: "PL1", Kind: collection.KindSeries, Slug: slug, FallbackSlug: slug + "-2", Title: "Playlist", ContentIDs: []int64{a},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := svc.PublicEditorial(ctx, collection.KindSeries, source, page.Request[collection.EditorialCursor]{Limit: 10})
+	if err != nil || len(got.Items) != 1 || got.Items[0].ID != id || got.Items[0].Source == nil || *got.Items[0].Source != source {
+		t.Fatalf("by source = %+v, %v", got.Items, err)
+	}
+	if got.Items[0].ItemCount == nil || *got.Items[0].ItemCount != 1 {
+		t.Fatalf("item count = %v", got.Items[0].ItemCount)
+	}
+	all, err := svc.PublicEditorial(ctx, collection.KindSeries, "", page.Request[collection.EditorialCursor]{Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[int64]bool{}
+	for _, c := range all.Items {
+		seen[c.ID] = true
+	}
+	if !seen[id] || !seen[plain.ID] {
+		t.Fatalf("unfiltered listing missing %d or %d", id, plain.ID)
 	}
 }

@@ -62,6 +62,8 @@ type Collection struct {
 	Visibility  string    `json:"visibility"`
 	ItemCount   *int32    `json:"itemCount,omitempty"`
 	UpdatedAt   time.Time `json:"updatedAt"`
+	// Source is set on collections mirrored from outside (e.g. "YOUTUBE" for a playlist).
+	Source *string `json:"source,omitempty"`
 }
 
 type Input struct {
@@ -74,7 +76,7 @@ type Input struct {
 
 func fromRow(c collectiondb.Collection) Collection {
 	return Collection{ID: c.ID, Kind: Kind(c.Kind), Slug: c.Slug, Title: c.Title, Description: c.Description,
-		OwnerID: c.OwnerID, Visibility: c.Visibility, UpdatedAt: c.UpdatedAt}
+		OwnerID: c.OwnerID, Visibility: c.Visibility, UpdatedAt: c.UpdatedAt, Source: c.Source}
 }
 
 var errNotFound = apperr.NotFound("collection.not_found", "No such collection.")
@@ -329,13 +331,14 @@ func (s *Service) Editorial(ctx context.Context, p auth.Principal, kind Kind, re
 	out := make([]Collection, len(rows))
 	for i, r := range rows {
 		out[i] = withCount(collectiondb.Collection{ID: r.ID, Kind: r.Kind, Slug: r.Slug, Title: r.Title, Description: r.Description,
-			OwnerID: r.OwnerID, Visibility: r.Visibility, UpdatedAt: r.UpdatedAt}, r.ItemCount)
+			OwnerID: r.OwnerID, Visibility: r.Visibility, UpdatedAt: r.UpdatedAt, Source: r.Source}, r.ItemCount)
 	}
 	return page.Build(out, req.Limit, editorialCursor), nil
 }
 
-// PublicEditorial lists the PUBLIC study plans, series or courses for their index pages.
-func (s *Service) PublicEditorial(ctx context.Context, kind Kind, req page.Request[EditorialCursor]) (page.Page[Collection], error) {
+// PublicEditorial lists the PUBLIC study plans, series or courses for their index pages. A
+// non-empty source narrows it to collections mirrored from that source (the video hub's series).
+func (s *Service) PublicEditorial(ctx context.Context, kind Kind, source string, req page.Request[EditorialCursor]) (page.Page[Collection], error) {
 	if !kind.editorial() {
 		return page.Page[Collection]{}, errNotFound
 	}
@@ -343,16 +346,33 @@ func (s *Service) PublicEditorial(ctx context.Context, kind Kind, req page.Reque
 	if req.Key != nil {
 		after = &req.Key.ID
 	}
-	rows, err := collectiondb.New(s.db.Replica).ListPublicEditorialCollections(ctx, collectiondb.ListPublicEditorialCollectionsParams{
-		Kind: string(kind), AfterID: after, RowLimit: int32(req.Limit + 1),
-	})
-	if err != nil {
-		return page.Page[Collection]{}, err
+	q := collectiondb.New(s.db.Replica)
+	var out []Collection
+	if source == "" {
+		rows, err := q.ListPublicEditorialCollections(ctx, collectiondb.ListPublicEditorialCollectionsParams{
+			Kind: string(kind), AfterID: after, RowLimit: int32(req.Limit + 1),
+		})
+		if err != nil {
+			return page.Page[Collection]{}, err
+		}
+		for _, r := range rows {
+			out = append(out, withCount(collectiondb.Collection{ID: r.ID, Kind: r.Kind, Slug: r.Slug, Title: r.Title, Description: r.Description,
+				OwnerID: r.OwnerID, Visibility: r.Visibility, UpdatedAt: r.UpdatedAt, Source: r.Source}, r.ItemCount))
+		}
+	} else {
+		rows, err := q.ListPublicSourcedCollections(ctx, collectiondb.ListPublicSourcedCollectionsParams{
+			Source: &source, Kind: string(kind), AfterID: after, RowLimit: int32(req.Limit + 1),
+		})
+		if err != nil {
+			return page.Page[Collection]{}, err
+		}
+		for _, r := range rows {
+			out = append(out, withCount(collectiondb.Collection{ID: r.ID, Kind: r.Kind, Slug: r.Slug, Title: r.Title, Description: r.Description,
+				OwnerID: r.OwnerID, Visibility: r.Visibility, UpdatedAt: r.UpdatedAt, Source: r.Source}, r.ItemCount))
+		}
 	}
-	out := make([]Collection, len(rows))
-	for i, r := range rows {
-		out[i] = withCount(collectiondb.Collection{ID: r.ID, Kind: r.Kind, Slug: r.Slug, Title: r.Title, Description: r.Description,
-			OwnerID: r.OwnerID, Visibility: r.Visibility, UpdatedAt: r.UpdatedAt}, r.ItemCount)
+	if out == nil {
+		out = []Collection{}
 	}
 	return page.Build(out, req.Limit, editorialCursor), nil
 }

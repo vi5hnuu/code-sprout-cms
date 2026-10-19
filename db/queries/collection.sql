@@ -70,6 +70,15 @@ WHERE c.kind = sqlc.arg(kind) AND c.visibility = 'PUBLIC'
 ORDER BY c.id DESC
 LIMIT sqlc.arg(row_limit);
 
+-- name: ListPublicSourcedCollections :many
+-- Public collections mirrored from one outside source (YouTube playlists), newest first.
+SELECT c.*, (SELECT count(*) FROM collection_item i WHERE i.collection_id = c.id)::int AS item_count
+FROM collection c
+WHERE c.source = sqlc.arg(source) AND c.kind = sqlc.arg(kind) AND c.visibility = 'PUBLIC'
+  AND (sqlc.narg(after_id)::bigint IS NULL OR c.id < sqlc.narg(after_id))
+ORDER BY c.id DESC
+LIMIT sqlc.arg(row_limit);
+
 -- name: ListEditorialCollections :many
 SELECT c.*, (SELECT count(*) FROM collection_item i WHERE i.collection_id = c.id)::int AS item_count
 FROM collection c

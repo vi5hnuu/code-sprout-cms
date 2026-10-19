@@ -531,6 +531,76 @@ func (q *Queries) ListPublicEditorialCollections(ctx context.Context, arg ListPu
 	return items, nil
 }
 
+const listPublicSourcedCollections = `-- name: ListPublicSourcedCollections :many
+SELECT c.id, c.kind, c.slug, c.title, c.description, c.owner_id, c.visibility, c.created_at, c.updated_at, c.source, c.external_ref, (SELECT count(*) FROM collection_item i WHERE i.collection_id = c.id)::int AS item_count
+FROM collection c
+WHERE c.source = $1 AND c.kind = $2 AND c.visibility = 'PUBLIC'
+  AND ($3::bigint IS NULL OR c.id < $3)
+ORDER BY c.id DESC
+LIMIT $4
+`
+
+type ListPublicSourcedCollectionsParams struct {
+	Source   *string
+	Kind     string
+	AfterID  *int64
+	RowLimit int32
+}
+
+type ListPublicSourcedCollectionsRow struct {
+	ID          int64
+	Kind        string
+	Slug        string
+	Title       string
+	Description *string
+	OwnerID     int64
+	Visibility  string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	Source      *string
+	ExternalRef *string
+	ItemCount   int32
+}
+
+// Public collections mirrored from one outside source (YouTube playlists), newest first.
+func (q *Queries) ListPublicSourcedCollections(ctx context.Context, arg ListPublicSourcedCollectionsParams) ([]ListPublicSourcedCollectionsRow, error) {
+	rows, err := q.db.Query(ctx, listPublicSourcedCollections,
+		arg.Source,
+		arg.Kind,
+		arg.AfterID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPublicSourcedCollectionsRow{}
+	for rows.Next() {
+		var i ListPublicSourcedCollectionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.Slug,
+			&i.Title,
+			&i.Description,
+			&i.OwnerID,
+			&i.Visibility,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Source,
+			&i.ExternalRef,
+			&i.ItemCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const removeItem = `-- name: RemoveItem :execrows
 DELETE FROM collection_item WHERE collection_id = $1 AND content_id = $2
 `

@@ -2,6 +2,7 @@ package collection
 
 import (
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -177,13 +178,21 @@ func (h *Handler) publicBySlug(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// publicEditorial lists public study plans, series or courses: ?kind=study_plan|series|course.
+// sourcePattern bounds ?source= to a short identifier (e.g. youtube), never free text.
+var sourcePattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,31}$`)
+
+// publicEditorial lists public study plans, series or courses: ?kind=study_plan|series|course,
+// optionally only those mirrored from a source (?source=youtube).
 func (h *Handler) publicEditorial(w http.ResponseWriter, r *http.Request) error {
 	req, err := page.Parse[EditorialCursor](r)
 	if err != nil {
 		return err
 	}
-	res, err := h.svc.PublicEditorial(r.Context(), Kind(strings.ToUpper(r.URL.Query().Get("kind"))), req)
+	source := strings.ToUpper(r.URL.Query().Get("source"))
+	if source != "" && !sourcePattern.MatchString(source) {
+		return apperr.ValidationFailed(map[string]string{"source": "source must be a short identifier such as youtube."})
+	}
+	res, err := h.svc.PublicEditorial(r.Context(), Kind(strings.ToUpper(r.URL.Query().Get("kind"))), source, req)
 	if err != nil {
 		return err
 	}
