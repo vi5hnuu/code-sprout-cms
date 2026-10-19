@@ -256,18 +256,63 @@ func (q *Queries) ListFilesByID(ctx context.Context, ids []int64) ([]File, error
 	return items, nil
 }
 
-const listStaleFiles = `-- name: ListStaleFiles :many
-SELECT id, owner_id, bucket, storage_key, mime, size_bytes, sha256, status, width, height, lease_until, purpose, created_at, completed_at FROM file WHERE status = $1 AND created_at < $2 ORDER BY created_at LIMIT $3
+const listStalePendingFiles = `-- name: ListStalePendingFiles :many
+SELECT id, owner_id, bucket, storage_key, mime, size_bytes, sha256, status, width, height, lease_until, purpose, created_at, completed_at FROM file WHERE status = 'PENDING' AND created_at < $1 ORDER BY created_at LIMIT $2
 `
 
-type ListStaleFilesParams struct {
-	Status   string
+type ListStalePendingFilesParams struct {
 	Before   time.Time
 	RowLimit int32
 }
 
-func (q *Queries) ListStaleFiles(ctx context.Context, arg ListStaleFilesParams) ([]File, error) {
-	rows, err := q.db.Query(ctx, listStaleFiles, arg.Status, arg.Before, arg.RowLimit)
+// One query per status, with the status written out, so each reads its partial index
+// (idx_file_pending, idx_file_quarantined) instead of scanning every file.
+func (q *Queries) ListStalePendingFiles(ctx context.Context, arg ListStalePendingFilesParams) ([]File, error) {
+	rows, err := q.db.Query(ctx, listStalePendingFiles, arg.Before, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []File{}
+	for rows.Next() {
+		var i File
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerID,
+			&i.Bucket,
+			&i.StorageKey,
+			&i.Mime,
+			&i.SizeBytes,
+			&i.Sha256,
+			&i.Status,
+			&i.Width,
+			&i.Height,
+			&i.LeaseUntil,
+			&i.Purpose,
+			&i.CreatedAt,
+			&i.CompletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listStaleQuarantinedFiles = `-- name: ListStaleQuarantinedFiles :many
+SELECT id, owner_id, bucket, storage_key, mime, size_bytes, sha256, status, width, height, lease_until, purpose, created_at, completed_at FROM file WHERE status = 'QUARANTINED' AND created_at < $1 ORDER BY created_at LIMIT $2
+`
+
+type ListStaleQuarantinedFilesParams struct {
+	Before   time.Time
+	RowLimit int32
+}
+
+func (q *Queries) ListStaleQuarantinedFiles(ctx context.Context, arg ListStaleQuarantinedFilesParams) ([]File, error) {
+	rows, err := q.db.Query(ctx, listStaleQuarantinedFiles, arg.Before, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}

@@ -472,11 +472,15 @@ const (
 func (s *Service) CollectGarbage(ctx context.Context) (int, error) {
 	removed := 0
 	q := assetdb.New(s.db.Primary)
-	for status, ttl := range map[Status]time.Duration{StatusPending: pendingTTL, StatusQuarantined: quarantinedTTL} {
-		files, err := q.ListStaleFiles(ctx, assetdb.ListStaleFilesParams{Status: string(status), Before: time.Now().Add(-ttl), RowLimit: gcBatch})
-		if err != nil {
-			return removed, err
-		}
+	pending, err := q.ListStalePendingFiles(ctx, assetdb.ListStalePendingFilesParams{Before: time.Now().Add(-pendingTTL), RowLimit: gcBatch})
+	if err != nil {
+		return removed, err
+	}
+	quarantined, err := q.ListStaleQuarantinedFiles(ctx, assetdb.ListStaleQuarantinedFilesParams{Before: time.Now().Add(-quarantinedTTL), RowLimit: gcBatch})
+	if err != nil {
+		return removed, err
+	}
+	for _, files := range [][]assetdb.File{pending, quarantined} {
 		for _, f := range files {
 			if err := s.store.Delete(ctx, f.Bucket, f.StorageKey); err != nil {
 				slog.Warn("gc: delete object", "file", f.ID, "err", err)

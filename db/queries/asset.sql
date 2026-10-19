@@ -43,8 +43,13 @@ RETURNING *;
 -- name: ListFilesByID :many
 SELECT * FROM file WHERE id = ANY (sqlc.arg(ids)::bigint[]);
 
--- name: ListStaleFiles :many
-SELECT * FROM file WHERE status = sqlc.arg(status) AND created_at < sqlc.arg(before) ORDER BY created_at LIMIT sqlc.arg(row_limit);
+-- One query per status, with the status written out, so each reads its partial index
+-- (idx_file_pending, idx_file_quarantined) instead of scanning every file.
+-- name: ListStalePendingFiles :many
+SELECT * FROM file WHERE status = 'PENDING' AND created_at < sqlc.arg(before) ORDER BY created_at LIMIT sqlc.arg(row_limit);
+
+-- name: ListStaleQuarantinedFiles :many
+SELECT * FROM file WHERE status = 'QUARANTINED' AND created_at < sqlc.arg(before) ORDER BY created_at LIMIT sqlc.arg(row_limit);
 
 -- name: DeleteFile :exec
 DELETE FROM file WHERE id = $1;
