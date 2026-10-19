@@ -52,7 +52,13 @@ func NewService(cfg Config, paths Paths, sitemaps Sitemaps) *Service {
 	return &Service{cfg: cfg, paths: paths, sitemaps: sitemaps, http: &http.Client{Timeout: 10 * time.Second}}
 }
 
-func (s *Service) Register(d *outbox.Dispatcher) {
+// Subscriber is where delivery registers its event handlers (the outbox dispatcher).
+type Subscriber interface {
+	On(topic string, h outbox.Handler)
+}
+
+// Register subscribes delivery to the events that change what readers and crawlers see.
+func (s *Service) Register(d Subscriber) {
 	d.On(outbox.TopicContentPublished, s.contentChanged)
 	d.On(outbox.TopicContentUpdated, s.contentChanged)
 	d.On(outbox.TopicContentUnpublished, s.contentChanged)
