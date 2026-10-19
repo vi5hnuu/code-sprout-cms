@@ -94,7 +94,7 @@ LIMIT sqlc.arg(row_limit);
 SELECT external_id, content_id FROM video_ext WHERE provider = 'YOUTUBE' AND external_id = ANY (sqlc.arg(external_ids)::text[]);
 
 -- name: MediaByIDs :many
-SELECT content_id, thumbnail_url, duration_s, is_short FROM video_ext WHERE content_id = ANY (sqlc.arg(ids)::bigint[]);
+SELECT content_id, thumbnail_url, duration_s, is_short, published_at FROM video_ext WHERE content_id = ANY (sqlc.arg(ids)::bigint[]);
 
 -- Newest first, optionally one format; keyset on (published_at, content_id).
 -- name: ListVideoIDs :many

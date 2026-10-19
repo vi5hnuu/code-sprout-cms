@@ -2715,11 +2715,12 @@ components:
     VideoMedia:
       type: object
       description: Card media of a VIDEO item (absent for other types).
-      required: [thumbnailUrl, durationSeconds, isShort]
+      required: [thumbnailUrl, durationSeconds, isShort, publishedAt]
       properties:
         thumbnailUrl: { type: string }
         durationSeconds: { type: integer }
         isShort: { type: boolean }
+        publishedAt: { type: string, format: date-time, description: When it was published on YouTube (the order videos are listed in). }
     VideoChapter:
       type: object
       required: [t, label]

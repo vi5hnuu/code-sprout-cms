@@ -301,7 +301,7 @@ func (q *Queries) MarkShorts(ctx context.Context, arg MarkShortsParams) error {
 }
 
 const mediaByIDs = `-- name: MediaByIDs :many
-SELECT content_id, thumbnail_url, duration_s, is_short FROM video_ext WHERE content_id = ANY ($1::bigint[])
+SELECT content_id, thumbnail_url, duration_s, is_short, published_at FROM video_ext WHERE content_id = ANY ($1::bigint[])
 `
 
 type MediaByIDsRow struct {
@@ -309,6 +309,7 @@ type MediaByIDsRow struct {
 	ThumbnailUrl string
 	DurationS    int32
 	IsShort      bool
+	PublishedAt  time.Time
 }
 
 func (q *Queries) MediaByIDs(ctx context.Context, ids []int64) ([]MediaByIDsRow, error) {
@@ -325,6 +326,7 @@ func (q *Queries) MediaByIDs(ctx context.Context, ids []int64) ([]MediaByIDsRow,
 			&i.ThumbnailUrl,
 			&i.DurationS,
 			&i.IsShort,
+			&i.PublishedAt,
 		); err != nil {
 			return nil, err
 		}

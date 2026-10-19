@@ -123,7 +123,7 @@ func (s *Service) Media(ctx context.Context, ids []int64) (map[int64]content.Vid
 	rows, err := videodb.New(s.db.Replica).MediaByIDs(ctx, ids)
 	out := make(map[int64]content.VideoMedia, len(rows))
 	for _, r := range rows {
-		out[r.ContentID] = content.VideoMedia{ThumbnailURL: r.ThumbnailUrl, DurationSeconds: r.DurationS, IsShort: r.IsShort}
+		out[r.ContentID] = content.VideoMedia{ThumbnailURL: r.ThumbnailUrl, DurationSeconds: r.DurationS, IsShort: r.IsShort, PublishedAt: r.PublishedAt}
 	}
 	return out, err
 }

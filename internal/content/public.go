@@ -36,6 +36,8 @@ type VideoMedia struct {
 	ThumbnailURL    string `json:"thumbnailUrl"`
 	DurationSeconds int32  `json:"durationSeconds"`
 	IsShort         bool   `json:"isShort"`
+	// PublishedAt is when it went out on YouTube (the listing order), not when it was synced.
+	PublishedAt time.Time `json:"publishedAt"`
 }
 
 // SetVideoMedia installs the batch loader the video domain provides. Call during wiring.
