@@ -765,7 +765,7 @@ paths:
       description: Pass `type`, or one of `category`, `tag` or `author` (optionally with `type`).
       security: []
       parameters:
-        - { name: type, in: query, schema: { type: string, enum: [article, blog, problem, topic_page, quiz] } }
+        - { name: type, in: query, schema: { type: string, enum: [article, blog, problem, topic_page, quiz, video] } }
         - { name: category, in: query, schema: { type: string }, example: dsa/algorithms }
         - { name: tag, in: query, description: "kind:slug", schema: { type: string }, example: "topic:arrays" }
         - { name: author, in: query, description: Author handle., schema: { type: string } }
@@ -1968,7 +1968,7 @@ paths:
       security: []
       parameters:
         - { name: q, in: query, required: true, schema: { type: string, minLength: 2, maxLength: 200 } }
-        - { name: type, in: query, schema: { type: string, enum: [article, blog, problem, topic_page, quiz] } }
+        - { name: type, in: query, schema: { type: string, enum: [article, blog, problem, topic_page, quiz, video] } }
         - { name: difficulty, in: query, schema: { $ref: "#/components/schemas/Difficulty" } }
         - { name: locale, in: query, schema: { type: string, default: en } }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
@@ -2029,7 +2029,7 @@ paths:
       summary: The site paths in one sitemap chunk.
       security: []
       parameters:
-        - { name: type, in: path, required: true, schema: { type: string, enum: [article, blog, problem, topic_page, quiz, category, tag, collection] } }
+        - { name: type, in: path, required: true, schema: { type: string, enum: [article, blog, problem, topic_page, quiz, video, category, tag, collection] } }
         - { name: chunk, in: path, required: true, schema: { type: integer, minimum: 0 } }
       responses:
         "200":
