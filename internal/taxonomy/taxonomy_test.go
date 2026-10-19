@@ -229,3 +229,16 @@ func containsTag(tags []Tag, id int64) bool {
 	}
 	return false
 }
+
+// Root categories can never take a site route's name: /{root}/{slug} would collide with it.
+func TestReservedRootSlugs(t *testing.T) {
+	d := testenv.DB(t)
+	svc := NewService(d, access.NewPolicy(d.Primary))
+	ctx := context.Background()
+	admin := testenv.Admin(t, d)
+	for _, slug := range []string{"videos", "shorts", "blog", "interview"} {
+		if _, err := svc.Create(ctx, admin, CreateCategory{Slug: slug, Name: slug}); err == nil {
+			t.Fatalf("root category %q accepted", slug)
+		}
+	}
+}

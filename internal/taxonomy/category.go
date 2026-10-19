@@ -31,9 +31,10 @@ var slugPattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 // category named like one of these would collide with that page (see content.PublicPath).
 var reservedRootSlugs = map[string]bool{
 	"api": true, "articles": true, "auth": true, "blog": true, "category": true, "courses": true,
-	"library": true, "lists": true, "problem-of-the-day": true, "problems": true, "quiz": true,
-	"search": true, "series": true, "sitemaps": true, "studio": true, "study-plans": true,
-	"tag": true, "topics": true, "u": true,
+	"interview": true, "library": true, "lists": true, "og": true, "problem-of-the-day": true,
+	"problems": true, "quiz": true, "search": true, "series": true, "settings": true, "shorts": true,
+	"sitemaps": true, "studio": true, "study-plans": true, "tag": true, "tags": true, "topics": true,
+	"u": true, "videos": true,
 }
 
 // Category is the API view. Path is the URL form ("dsa/algorithms"); the database stores the
