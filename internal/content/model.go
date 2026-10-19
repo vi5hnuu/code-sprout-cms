@@ -19,6 +19,8 @@ const (
 	TypeProblem   Type = "PROBLEM"
 	TypeTopicPage Type = "TOPIC_PAGE"
 	TypeQuiz      Type = "QUIZ"
+	// TypeVideo mirrors an upload from a video platform (see internal/video); the media stays there.
+	TypeVideo Type = "VIDEO"
 )
 
 // studioTypes can be created through the generic studio endpoints. Problems and quizzes carry

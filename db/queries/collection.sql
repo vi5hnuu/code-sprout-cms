@@ -82,3 +82,23 @@ LIMIT sqlc.arg(row_limit);
 -- stay; they belong to the site.
 -- name: DeleteUserLists :exec
 DELETE FROM collection WHERE owner_id = $1 AND kind = 'LIST';
+
+-- ── Mirrored collections (e.g. YouTube playlists as SERIES) ──
+
+-- name: GetCollectionByExternal :one
+SELECT * FROM collection WHERE source = sqlc.arg(source) AND external_ref = sqlc.arg(external_ref) FOR UPDATE;
+
+-- name: InsertMirroredCollection :one
+INSERT INTO collection (kind, slug, title, description, owner_id, visibility, source, external_ref)
+VALUES (sqlc.arg(kind), sqlc.arg(slug), sqlc.arg(title), sqlc.narg(description), sqlc.arg(owner_id), 'PUBLIC', sqlc.arg(source), sqlc.arg(external_ref))
+RETURNING id;
+
+-- name: UpdateMirroredCollection :exec
+UPDATE collection SET title = sqlc.arg(title), description = sqlc.narg(description), updated_at = now()
+WHERE id = sqlc.arg(id);
+
+-- Items in the given order (positions 1..n).
+-- name: InsertItemsInOrder :exec
+INSERT INTO collection_item (collection_id, content_id, position)
+SELECT sqlc.arg(collection_id), t.id, t.ord
+FROM unnest(sqlc.arg(content_ids)::bigint[]) WITH ORDINALITY AS t(id, ord);

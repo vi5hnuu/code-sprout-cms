@@ -188,3 +188,30 @@ func (e *Events) Observe(topic string, err error, took time.Duration) {
 	e.handled.WithLabelValues(topic, result).Inc()
 	e.duration.WithLabelValues(topic).Observe(took.Seconds())
 }
+
+// VideoSync counts the video sync's runs, quota and per-video outcomes (video.Observer).
+type VideoSync struct {
+	runs   *prometheus.CounterVec
+	quota  prometheus.Counter
+	videos *prometheus.CounterVec
+}
+
+func (m *Metrics) VideoSync() *VideoSync {
+	v := &VideoSync{
+		runs: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "video_sync_runs_total", Help: "Video sync runs per channel by result (ok, quota, error).",
+		}, []string{"result"}),
+		quota: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "video_sync_quota_units_total", Help: "YouTube API quota units spent.",
+		}),
+		videos: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "videos_synced_total", Help: "Videos handled by the sync, by action (created, updated, unchanged, removed, error).",
+		}, []string{"action"}),
+	}
+	m.reg.MustRegister(v.runs, v.quota, v.videos)
+	return v
+}
+
+func (v *VideoSync) SyncRun(result string)     { v.runs.WithLabelValues(result).Inc() }
+func (v *VideoSync) QuotaSpent(units int)      { v.quota.Add(float64(units)) }
+func (v *VideoSync) VideoSynced(action string) { v.videos.WithLabelValues(action).Inc() }

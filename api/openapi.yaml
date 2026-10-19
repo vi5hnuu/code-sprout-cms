@@ -39,6 +39,8 @@ tags:
     description: Likes, bookmarks, comments, shares and views.
   - name: problems
     description: Practice problems, their judging setup, and the problem of the day.
+  - name: videos
+    description: The owner's YouTube uploads, mirrored as watch pages and series.
   - name: judging
     description: Running code, submissions, progress and stats (executed by ls-judge).
   - name: library
@@ -1397,6 +1399,40 @@ paths:
               schema: { $ref: "#/components/schemas/ProblemPage" }
         "301": { description: Renamed; see Location }
         "404": { $ref: "#/components/responses/Problem" }
+  /v1/public/videos:
+    get:
+      tags: [videos]
+      operationId: listVideos
+      summary: Videos newest first (by YouTube publish time), optionally only Shorts or only regular videos.
+      security: []
+      parameters:
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+        - { name: format, in: query, schema: { type: string, enum: [short, long] } }
+      responses:
+        "200":
+          description: Page of videos
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ListItemPage" }
+        "400": { $ref: "#/components/responses/Problem" }
+  /v1/public/videos/{slug}:
+    get:
+      tags: [videos]
+      operationId: getVideoPage
+      summary: A video's watch page (notes, chapters, the problems it solves).
+      security: []
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string } }
+        - { name: locale, in: query, schema: { type: string, default: en } }
+      responses:
+        "200":
+          description: Video page
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VideoPage" }
+        "301": { description: Renamed; see Location }
+        "404": { $ref: "#/components/responses/Problem" }
   /v1/public/problems/{id}/hints:
     get:
       tags: [problems]
@@ -1981,7 +2017,7 @@ paths:
                         type:
                           type: string
                           description: A content type, or a hub kind (category, tag and collection listing pages).
-                          enum: [ARTICLE, BLOG, PROBLEM, TOPIC_PAGE, QUIZ, CATEGORY, TAG, COLLECTION]
+                          enum: [ARTICLE, BLOG, PROBLEM, TOPIC_PAGE, QUIZ, VIDEO, CATEGORY, TAG, COLLECTION]
                         chunk: { type: integer }
                         urlCount: { type: integer }
                         lastmod: { type: string, format: date-time }
@@ -2372,7 +2408,7 @@ components:
                   description: Send every one exactly; they are part of the signature.
                 expiresAt: { type: string, format: date-time }
 
-    ContentType: { type: string, enum: [ARTICLE, BLOG, PROBLEM, TOPIC_PAGE, QUIZ] }
+    ContentType: { type: string, enum: [ARTICLE, BLOG, PROBLEM, TOPIC_PAGE, QUIZ, VIDEO] }
     ContentStatus: { type: string, enum: [DRAFT, PUBLISHED, ARCHIVED] }
     ReviewState: { type: string, enum: [NONE, IN_REVIEW, CHANGES_REQUESTED, APPROVED, SCHEDULED] }
     Meta:
@@ -2601,7 +2637,7 @@ components:
       required: [kind, id, type, locale, slug, title, path]
       properties:
         path: { type: string, description: "Canonical site path of the target." }
-        kind: { type: string, enum: [PRACTICE, RELATED, PREREQUISITE, EDITORIAL] }
+        kind: { type: string, enum: [PRACTICE, RELATED, PREREQUISITE, EDITORIAL, VIDEO], description: "VIDEO: the problem's video solution (an editor's choice, else an exact title match)." }
         id: { type: integer, format: int64 }
         type: { $ref: "#/components/schemas/ContentType" }
         locale: { type: string }
@@ -2671,6 +2707,51 @@ components:
           oneOf:
             - type: "null"
             - $ref: "#/components/schemas/File"
+        video: { $ref: "#/components/schemas/VideoMedia" }
+    VideoMedia:
+      type: object
+      description: Card media of a VIDEO item (absent for other types).
+      required: [thumbnailUrl, durationSeconds, isShort]
+      properties:
+        thumbnailUrl: { type: string }
+        durationSeconds: { type: integer }
+        isShort: { type: boolean }
+    VideoChapter:
+      type: object
+      required: [t, label]
+      properties:
+        t: { type: integer, description: Start in seconds. }
+        label: { type: string }
+    VideoDetail:
+      type: object
+      required: [provider, externalId, embedUrl, watchUrl, durationSeconds, publishedAt, thumbnail, isShort, chapters, problems]
+      properties:
+        provider: { type: string, enum: [YOUTUBE] }
+        externalId: { type: string }
+        embedUrl: { type: string, description: Privacy-enhanced player URL. }
+        watchUrl: { type: string, description: The video on YouTube itself. }
+        durationSeconds: { type: integer }
+        publishedAt: { type: string, format: date-time, description: When it was published on YouTube. }
+        thumbnail:
+          type: object
+          required: [url]
+          properties:
+            url: { type: string }
+            width: { type: integer }
+            height: { type: integer }
+        isShort: { type: boolean }
+        chapters: { type: array, items: { $ref: "#/components/schemas/VideoChapter" } }
+        problems:
+          description: Problems this video solves ("Practice this problem").
+          type: array
+          items: { $ref: "#/components/schemas/PublicLink" }
+    VideoPage:
+      allOf:
+        - $ref: "#/components/schemas/PublicPage"
+        - type: object
+          required: [video]
+          properties:
+            video: { $ref: "#/components/schemas/VideoDetail" }
     ListItemPage:
       type: object
       required: [items, nextCursor]
@@ -2746,6 +2827,10 @@ components:
         checker: { type: string, enum: [EXACT, TOKEN, FLOAT], default: EXACT }
         checkerFileId: { type: [integer, "null"], format: int64 }
         editorialContentId: { type: [integer, "null"], format: int64 }
+        videoContentId:
+          type: [integer, "null"]
+          format: int64
+          description: The problem's video solution; null lets the video sync link an exact title match.
     Sample:
       type: object
       required: [input, output]

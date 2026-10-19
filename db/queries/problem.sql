@@ -12,8 +12,12 @@ SELECT * FROM problem_ext WHERE content_id = ANY (sqlc.arg(ids)::bigint[]);
 UPDATE problem_ext
 SET difficulty = sqlc.arg(difficulty), time_limit_ms = sqlc.arg(time_limit_ms), memory_mb = sqlc.arg(memory_mb),
     checker = sqlc.arg(checker), checker_file_id = sqlc.narg(checker_file_id),
-    editorial_content_id = sqlc.narg(editorial_content_id)
+    editorial_content_id = sqlc.narg(editorial_content_id), video_content_id = sqlc.narg(video_content_id)
 WHERE content_id = sqlc.arg(content_id);
+
+-- Of these problems, those with no editor-chosen video (the sync may auto-link them).
+-- name: WithoutChosenVideo :many
+SELECT content_id FROM problem_ext WHERE content_id = ANY (sqlc.arg(ids)::bigint[]) AND video_content_id IS NULL;
 
 -- name: SetListedAt :exec
 UPDATE problem_ext SET listed_at = sqlc.narg(listed_at) WHERE content_id = sqlc.arg(content_id);

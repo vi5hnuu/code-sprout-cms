@@ -136,3 +136,22 @@ func (e *Env) Publish(slug string, samples []problem.Sample, hidden []judge.Test
 	}
 	return d.ID
 }
+
+// PublishArticle publishes an article in the arena category (e.g. a problem's editorial) and
+// returns its id.
+func (e *Env) PublishArticle(slug string) int64 {
+	e.T.Helper()
+	ctx := context.Background()
+	summary := "How to solve the arena problem step by step, with the reasoning behind each choice."
+	d, err := e.Contents.Create(ctx, e.Author, content.CreateInput{Type: content.TypeArticle, DraftInput: content.DraftInput{
+		Meta: content.Meta{Title: "Editorial " + slug, Slug: slug, Summary: &summary, CategoryID: &e.Category.ID},
+		Body: "## Approach\n\nAdd the two numbers.\n",
+	}})
+	if err != nil {
+		e.T.Fatal(err)
+	}
+	if _, err := e.Contents.Publish(ctx, e.Editor, d.ID); err != nil {
+		e.T.Fatal(err)
+	}
+	return d.ID
+}

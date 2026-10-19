@@ -44,6 +44,9 @@ type Settings struct {
 	Checker            string     `json:"checker"`
 	CheckerFileID      *int64     `json:"checkerFileId"`
 	EditorialContentID *int64     `json:"editorialContentId"`
+	// VideoContentID is the editor's video solution; nil lets the video sync link an exact
+	// title match instead.
+	VideoContentID *int64 `json:"videoContentId"`
 }
 
 type Sample struct {

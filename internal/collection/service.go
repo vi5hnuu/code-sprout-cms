@@ -434,3 +434,75 @@ func (s *Service) view(ctx context.Context, c collectiondb.Collection, req page.
 	}
 	return View{Collection: fromRow(c), Items: items, NextCursor: built.NextCursor}, nil
 }
+
+// Mirrored is an editorial collection kept in step with an outside list (a YouTube playlist
+// becomes a SERIES). The source owns its title and order; edits in the studio are overwritten
+// by the next sync, so mirrored collections are edited at their source.
+type Mirrored struct {
+	Source       string // e.g. "YOUTUBE"
+	ExternalRef  string // the playlist id
+	Kind         Kind
+	Slug         string
+	FallbackSlug string // used when Slug is taken
+	Title        string
+	Description  *string
+	ContentIDs   []int64 // in order
+}
+
+// UpsertMirrored creates or refreshes a mirrored collection inside the caller's transaction and
+// returns its id. ownerID owns it (the channel's account).
+func (s *Service) UpsertMirrored(ctx context.Context, tx pgx.Tx, ownerID int64, m Mirrored) (int64, error) {
+	q := collectiondb.New(tx)
+	c, err := q.GetCollectionByExternal(ctx, collectiondb.GetCollectionByExternalParams{Source: &m.Source, ExternalRef: &m.ExternalRef})
+	var id int64
+	switch {
+	case db.IsNoRows(err):
+		if id, err = insertMirrored(ctx, tx, ownerID, m); err != nil {
+			return 0, err
+		}
+	case err != nil:
+		return 0, err
+	default:
+		id = c.ID
+		if err := q.UpdateMirroredCollection(ctx, collectiondb.UpdateMirroredCollectionParams{ID: id, Title: m.Title, Description: m.Description}); err != nil {
+			return 0, err
+		}
+		if err := q.ClearItems(ctx, id); err != nil {
+			return 0, err
+		}
+	}
+	if len(m.ContentIDs) > 0 {
+		if err := q.InsertItemsInOrder(ctx, collectiondb.InsertItemsInOrderParams{CollectionID: id, ContentIds: m.ContentIDs}); err != nil {
+			return 0, err
+		}
+	}
+	return id, nil
+}
+
+// insertMirrored tries the slug, then the fallback, each in a savepoint so a taken slug does not
+// abort the caller's transaction.
+func insertMirrored(ctx context.Context, tx pgx.Tx, ownerID int64, m Mirrored) (int64, error) {
+	for _, slug := range []string{m.Slug, m.FallbackSlug} {
+		if slug == "" {
+			continue
+		}
+		sp, err := tx.Begin(ctx)
+		if err != nil {
+			return 0, err
+		}
+		id, err := collectiondb.New(sp).InsertMirroredCollection(ctx, collectiondb.InsertMirroredCollectionParams{
+			Kind: string(m.Kind), Slug: slug, Title: m.Title, Description: m.Description, OwnerID: ownerID,
+			Source: &m.Source, ExternalRef: &m.ExternalRef,
+		})
+		if cv, ok := db.ConstraintViolation(err); ok && cv == "uq_collection_slug" {
+			_ = sp.Rollback(ctx)
+			continue
+		}
+		if err != nil {
+			_ = sp.Rollback(ctx)
+			return 0, err
+		}
+		return id, sp.Commit(ctx)
+	}
+	return 0, apperr.Conflict("collection.slug_taken", "A collection with this slug already exists.")
+}

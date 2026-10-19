@@ -26,6 +26,21 @@ type Reader struct {
 	taxonomy PublicTaxonomy
 	users    PublicUsers
 	stats    StatsReader
+	// videoMedia adds thumbnails and durations to VIDEO rows in any listing; nil when the video
+	// domain is not wired (the field then stays empty).
+	videoMedia func(ctx context.Context, ids []int64) (map[int64]VideoMedia, error)
+}
+
+// VideoMedia is what a listing card shows for a VIDEO item.
+type VideoMedia struct {
+	ThumbnailURL    string `json:"thumbnailUrl"`
+	DurationSeconds int32  `json:"durationSeconds"`
+	IsShort         bool   `json:"isShort"`
+}
+
+// SetVideoMedia installs the batch loader the video domain provides. Call during wiring.
+func (r *Reader) SetVideoMedia(load func(ctx context.Context, ids []int64) (map[int64]VideoMedia, error)) {
+	r.videoMedia = load
 }
 
 type PublicTaxonomy interface {
@@ -212,6 +227,7 @@ type ListItem struct {
 	Author          user.PublicUser    `json:"author"`
 	Stats           engagement.Stats   `json:"stats"`
 	Cover           *asset.File        `json:"cover"` // blog cover image, for card layouts
+	Video           *VideoMedia        `json:"video,omitempty"`
 }
 
 type PublishedCursor struct {
@@ -346,6 +362,10 @@ func (r *Reader) hydrateList(ctx context.Context, q *contentdb.Queries, rows []c
 	if err != nil {
 		return nil, err
 	}
+	media, err := r.listVideoMedia(ctx, rows)
+	if err != nil {
+		return nil, err
+	}
 
 	items := make([]ListItem, len(rows))
 	for i, c := range rows {
@@ -353,6 +373,9 @@ func (r *Reader) hydrateList(ctx context.Context, q *contentdb.Queries, rows []c
 			ID: c.ID, Type: Type(c.Type), Locale: c.Locale, Slug: c.Slug, Title: c.Title, Summary: c.Summary,
 			Access: c.Access, PublishedAt: *c.PublishedAt, LastPublishedAt: *c.LastPublishedAt,
 			ReadingMinutes: reading[c.ID], Author: authors[c.AuthorID], Stats: stats[c.ID], Cover: covers[c.ID],
+		}
+		if m, ok := media[c.ID]; ok {
+			item.Video = &m
 		}
 		if c.PrimaryCategoryID != nil {
 			if cat, ok := cats[*c.PrimaryCategoryID]; ok {
@@ -362,6 +385,38 @@ func (r *Reader) hydrateList(ctx context.Context, q *contentdb.Queries, rows []c
 		items[i] = item
 	}
 	return items, nil
+}
+
+// listVideoMedia loads card media for the VIDEO rows of a page: one batched call, none when
+// the page holds no videos.
+func (r *Reader) listVideoMedia(ctx context.Context, rows []contentdb.Content) (map[int64]VideoMedia, error) {
+	if r.videoMedia == nil {
+		return nil, nil
+	}
+	var ids []int64
+	for _, c := range rows {
+		if Type(c.Type) == TypeVideo {
+			ids = append(ids, c.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	return r.videoMedia(ctx, ids)
+}
+
+// Backlinks returns live items linking to id with kind (e.g. the problems a video solves).
+func (r *Reader) Backlinks(ctx context.Context, id int64, kind string, limit int32) ([]Link, error) {
+	rows, err := contentdb.New(r.db.Replica).ListLiveBacklinks(ctx, contentdb.ListLiveBacklinksParams{ToID: id, Kind: kind, RowLimit: limit})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Link, len(rows))
+	for i, l := range rows {
+		out[i] = Link{Kind: kind, ID: l.ID, Type: Type(l.Type), Locale: l.Locale, Slug: l.Slug, Title: l.Title,
+			Path: PublicPath(Type(l.Type), l.Locale, l.Section, l.Slug)}
+	}
+	return out, nil
 }
 
 // listCovers resolves blog covers for a page of rows: two batched queries whatever the page

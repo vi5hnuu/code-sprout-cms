@@ -103,7 +103,7 @@ func (q *Queries) DeleteUserLists(ctx context.Context, ownerID int64) error {
 }
 
 const getCollection = `-- name: GetCollection :one
-SELECT id, kind, slug, title, description, owner_id, visibility, created_at, updated_at FROM collection WHERE id = $1
+SELECT id, kind, slug, title, description, owner_id, visibility, created_at, updated_at, source, external_ref FROM collection WHERE id = $1
 `
 
 func (q *Queries) GetCollection(ctx context.Context, id int64) (Collection, error) {
@@ -119,12 +119,44 @@ func (q *Queries) GetCollection(ctx context.Context, id int64) (Collection, erro
 		&i.Visibility,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Source,
+		&i.ExternalRef,
+	)
+	return i, err
+}
+
+const getCollectionByExternal = `-- name: GetCollectionByExternal :one
+
+SELECT id, kind, slug, title, description, owner_id, visibility, created_at, updated_at, source, external_ref FROM collection WHERE source = $1 AND external_ref = $2 FOR UPDATE
+`
+
+type GetCollectionByExternalParams struct {
+	Source      *string
+	ExternalRef *string
+}
+
+// ── Mirrored collections (e.g. YouTube playlists as SERIES) ──
+func (q *Queries) GetCollectionByExternal(ctx context.Context, arg GetCollectionByExternalParams) (Collection, error) {
+	row := q.db.QueryRow(ctx, getCollectionByExternal, arg.Source, arg.ExternalRef)
+	var i Collection
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.Slug,
+		&i.Title,
+		&i.Description,
+		&i.OwnerID,
+		&i.Visibility,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Source,
+		&i.ExternalRef,
 	)
 	return i, err
 }
 
 const getCollectionBySlug = `-- name: GetCollectionBySlug :one
-SELECT id, kind, slug, title, description, owner_id, visibility, created_at, updated_at FROM collection WHERE kind = $1 AND slug = $2
+SELECT id, kind, slug, title, description, owner_id, visibility, created_at, updated_at, source, external_ref FROM collection WHERE kind = $1 AND slug = $2
 `
 
 type GetCollectionBySlugParams struct {
@@ -145,12 +177,14 @@ func (q *Queries) GetCollectionBySlug(ctx context.Context, arg GetCollectionBySl
 		&i.Visibility,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Source,
+		&i.ExternalRef,
 	)
 	return i, err
 }
 
 const getCollectionForUpdate = `-- name: GetCollectionForUpdate :one
-SELECT id, kind, slug, title, description, owner_id, visibility, created_at, updated_at FROM collection WHERE id = $1 FOR UPDATE
+SELECT id, kind, slug, title, description, owner_id, visibility, created_at, updated_at, source, external_ref FROM collection WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) GetCollectionForUpdate(ctx context.Context, id int64) (Collection, error) {
@@ -166,6 +200,8 @@ func (q *Queries) GetCollectionForUpdate(ctx context.Context, id int64) (Collect
 		&i.Visibility,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Source,
+		&i.ExternalRef,
 	)
 	return i, err
 }
@@ -173,7 +209,7 @@ func (q *Queries) GetCollectionForUpdate(ctx context.Context, id int64) (Collect
 const insertCollection = `-- name: InsertCollection :one
 INSERT INTO collection (kind, slug, title, description, owner_id, visibility)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, kind, slug, title, description, owner_id, visibility, created_at, updated_at
+RETURNING id, kind, slug, title, description, owner_id, visibility, created_at, updated_at, source, external_ref
 `
 
 type InsertCollectionParams struct {
@@ -205,6 +241,8 @@ func (q *Queries) InsertCollection(ctx context.Context, arg InsertCollectionPara
 		&i.Visibility,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Source,
+		&i.ExternalRef,
 	)
 	return i, err
 }
@@ -224,8 +262,56 @@ func (q *Queries) InsertItemAt(ctx context.Context, arg InsertItemAtParams) erro
 	return err
 }
 
+const insertItemsInOrder = `-- name: InsertItemsInOrder :exec
+INSERT INTO collection_item (collection_id, content_id, position)
+SELECT $1, t.id, t.ord
+FROM unnest($2::bigint[]) WITH ORDINALITY AS t(id, ord)
+`
+
+type InsertItemsInOrderParams struct {
+	CollectionID int64
+	ContentIds   []int64
+}
+
+// Items in the given order (positions 1..n).
+func (q *Queries) InsertItemsInOrder(ctx context.Context, arg InsertItemsInOrderParams) error {
+	_, err := q.db.Exec(ctx, insertItemsInOrder, arg.CollectionID, arg.ContentIds)
+	return err
+}
+
+const insertMirroredCollection = `-- name: InsertMirroredCollection :one
+INSERT INTO collection (kind, slug, title, description, owner_id, visibility, source, external_ref)
+VALUES ($1, $2, $3, $4, $5, 'PUBLIC', $6, $7)
+RETURNING id
+`
+
+type InsertMirroredCollectionParams struct {
+	Kind        string
+	Slug        string
+	Title       string
+	Description *string
+	OwnerID     int64
+	Source      *string
+	ExternalRef *string
+}
+
+func (q *Queries) InsertMirroredCollection(ctx context.Context, arg InsertMirroredCollectionParams) (int64, error) {
+	row := q.db.QueryRow(ctx, insertMirroredCollection,
+		arg.Kind,
+		arg.Slug,
+		arg.Title,
+		arg.Description,
+		arg.OwnerID,
+		arg.Source,
+		arg.ExternalRef,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
 const listEditorialCollections = `-- name: ListEditorialCollections :many
-SELECT c.id, c.kind, c.slug, c.title, c.description, c.owner_id, c.visibility, c.created_at, c.updated_at, (SELECT count(*) FROM collection_item i WHERE i.collection_id = c.id)::int AS item_count
+SELECT c.id, c.kind, c.slug, c.title, c.description, c.owner_id, c.visibility, c.created_at, c.updated_at, c.source, c.external_ref, (SELECT count(*) FROM collection_item i WHERE i.collection_id = c.id)::int AS item_count
 FROM collection c
 WHERE c.kind = $1
   AND ($2::bigint IS NULL OR c.id < $2)
@@ -249,6 +335,8 @@ type ListEditorialCollectionsRow struct {
 	Visibility  string
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+	Source      *string
+	ExternalRef *string
 	ItemCount   int32
 }
 
@@ -271,6 +359,8 @@ func (q *Queries) ListEditorialCollections(ctx context.Context, arg ListEditoria
 			&i.Visibility,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Source,
+			&i.ExternalRef,
 			&i.ItemCount,
 		); err != nil {
 			return nil, err
@@ -323,7 +413,7 @@ func (q *Queries) ListItems(ctx context.Context, arg ListItemsParams) ([]ListIte
 }
 
 const listOwnerCollections = `-- name: ListOwnerCollections :many
-SELECT c.id, c.kind, c.slug, c.title, c.description, c.owner_id, c.visibility, c.created_at, c.updated_at, (SELECT count(*) FROM collection_item i WHERE i.collection_id = c.id)::int AS item_count
+SELECT c.id, c.kind, c.slug, c.title, c.description, c.owner_id, c.visibility, c.created_at, c.updated_at, c.source, c.external_ref, (SELECT count(*) FROM collection_item i WHERE i.collection_id = c.id)::int AS item_count
 FROM collection c WHERE c.owner_id = $1 AND c.kind = 'LIST'
 ORDER BY c.updated_at DESC LIMIT 200
 `
@@ -338,6 +428,8 @@ type ListOwnerCollectionsRow struct {
 	Visibility  string
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+	Source      *string
+	ExternalRef *string
 	ItemCount   int32
 }
 
@@ -360,6 +452,8 @@ func (q *Queries) ListOwnerCollections(ctx context.Context, ownerID int64) ([]Li
 			&i.Visibility,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Source,
+			&i.ExternalRef,
 			&i.ItemCount,
 		); err != nil {
 			return nil, err
@@ -373,7 +467,7 @@ func (q *Queries) ListOwnerCollections(ctx context.Context, ownerID int64) ([]Li
 }
 
 const listPublicEditorialCollections = `-- name: ListPublicEditorialCollections :many
-SELECT c.id, c.kind, c.slug, c.title, c.description, c.owner_id, c.visibility, c.created_at, c.updated_at, (SELECT count(*) FROM collection_item i WHERE i.collection_id = c.id)::int AS item_count
+SELECT c.id, c.kind, c.slug, c.title, c.description, c.owner_id, c.visibility, c.created_at, c.updated_at, c.source, c.external_ref, (SELECT count(*) FROM collection_item i WHERE i.collection_id = c.id)::int AS item_count
 FROM collection c
 WHERE c.kind = $1 AND c.visibility = 'PUBLIC'
   AND ($2::bigint IS NULL OR c.id < $2)
@@ -397,6 +491,8 @@ type ListPublicEditorialCollectionsRow struct {
 	Visibility  string
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+	Source      *string
+	ExternalRef *string
 	ItemCount   int32
 }
 
@@ -421,6 +517,8 @@ func (q *Queries) ListPublicEditorialCollections(ctx context.Context, arg ListPu
 			&i.Visibility,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Source,
+			&i.ExternalRef,
 			&i.ItemCount,
 		); err != nil {
 			return nil, err
@@ -463,7 +561,7 @@ const updateCollection = `-- name: UpdateCollection :one
 UPDATE collection
 SET title = $1, description = $2, visibility = $3, updated_at = now()
 WHERE id = $4
-RETURNING id, kind, slug, title, description, owner_id, visibility, created_at, updated_at
+RETURNING id, kind, slug, title, description, owner_id, visibility, created_at, updated_at, source, external_ref
 `
 
 type UpdateCollectionParams struct {
@@ -491,6 +589,24 @@ func (q *Queries) UpdateCollection(ctx context.Context, arg UpdateCollectionPara
 		&i.Visibility,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Source,
+		&i.ExternalRef,
 	)
 	return i, err
+}
+
+const updateMirroredCollection = `-- name: UpdateMirroredCollection :exec
+UPDATE collection SET title = $1, description = $2, updated_at = now()
+WHERE id = $3
+`
+
+type UpdateMirroredCollectionParams struct {
+	Title       string
+	Description *string
+	ID          int64
+}
+
+func (q *Queries) UpdateMirroredCollection(ctx context.Context, arg UpdateMirroredCollectionParams) error {
+	_, err := q.db.Exec(ctx, updateMirroredCollection, arg.Title, arg.Description, arg.ID)
+	return err
 }

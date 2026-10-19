@@ -521,8 +521,10 @@ func staleRevision(current int32) error {
 	}
 }
 
+const slugTakenCode = "content.slug_taken"
+
 func slugTaken() error {
-	return apperr.Conflict("content.slug_taken", "Another item already uses this slug.")
+	return apperr.Conflict(slugTakenCode, "Another item already uses this slug.")
 }
 
 func mapContentErr(err error) error {

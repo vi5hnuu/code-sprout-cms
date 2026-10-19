@@ -28,6 +28,7 @@ type ProblemExt struct {
 	SubmissionCount    int64
 	AcceptedCount      int64
 	ListedAt           *time.Time
+	VideoContentID     *int64
 }
 
 type ProblemHint struct {

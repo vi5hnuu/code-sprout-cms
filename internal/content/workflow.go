@@ -301,7 +301,7 @@ func (s *Service) setReview(ctx context.Context, tx pgx.Tx, q *contentdb.Queries
 // checkPublishable runs every rule a live page must satisfy and reports all failures at once.
 func (s *Service) checkPublishable(ctx context.Context, tx pgx.Tx, q *contentdb.Queries, c contentdb.Content, meta Meta, body string) (*publishPlan, error) {
 	a := markdown.Analyze([]byte(body))
-	issues := append(metaIssues(meta), bodyIssues(a)...)
+	issues := append(metaIssues(Type(c.Type), meta), bodyIssues(a)...)
 
 	assetIDs := a.AssetIDs
 	if meta.Blog != nil && meta.Blog.CoverFileID != nil {

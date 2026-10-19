@@ -20,7 +20,7 @@ import (
 var largeTables = []string{
 	"content", "content_revision", "content_tag", "content_link", "comment", "reaction", "bookmark",
 	"bookmark_list", "collection_item", "submission", "user_problem", "user_review", "user_note",
-	"user_activity_day", "file", "outbox", "audit_log", "content_daily_stats",
+	"user_activity_day", "file", "outbox", "audit_log", "content_daily_stats", "video_ext",
 }
 
 // allowedScans are queries that may scan a large table, each with the reason. Empty today: every

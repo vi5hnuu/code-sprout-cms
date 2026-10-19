@@ -48,7 +48,7 @@ func (q *Queries) DeleteTemplate(ctx context.Context, arg DeleteTemplateParams) 
 }
 
 const getProblemExt = `-- name: GetProblemExt :one
-SELECT content_id, difficulty, time_limit_ms, memory_mb, checker, checker_file_id, active_test_set_id, editorial_content_id, submission_count, accepted_count, listed_at FROM problem_ext WHERE content_id = $1
+SELECT content_id, difficulty, time_limit_ms, memory_mb, checker, checker_file_id, active_test_set_id, editorial_content_id, submission_count, accepted_count, listed_at, video_content_id FROM problem_ext WHERE content_id = $1
 `
 
 func (q *Queries) GetProblemExt(ctx context.Context, contentID int64) (ProblemExt, error) {
@@ -66,6 +66,7 @@ func (q *Queries) GetProblemExt(ctx context.Context, contentID int64) (ProblemEx
 		&i.SubmissionCount,
 		&i.AcceptedCount,
 		&i.ListedAt,
+		&i.VideoContentID,
 	)
 	return i, err
 }
@@ -331,7 +332,7 @@ func (q *Queries) ListListedProblems(ctx context.Context, arg ListListedProblems
 }
 
 const listProblemExt = `-- name: ListProblemExt :many
-SELECT content_id, difficulty, time_limit_ms, memory_mb, checker, checker_file_id, active_test_set_id, editorial_content_id, submission_count, accepted_count, listed_at FROM problem_ext WHERE content_id = ANY ($1::bigint[])
+SELECT content_id, difficulty, time_limit_ms, memory_mb, checker, checker_file_id, active_test_set_id, editorial_content_id, submission_count, accepted_count, listed_at, video_content_id FROM problem_ext WHERE content_id = ANY ($1::bigint[])
 `
 
 func (q *Queries) ListProblemExt(ctx context.Context, ids []int64) ([]ProblemExt, error) {
@@ -355,6 +356,7 @@ func (q *Queries) ListProblemExt(ctx context.Context, ids []int64) ([]ProblemExt
 			&i.SubmissionCount,
 			&i.AcceptedCount,
 			&i.ListedAt,
+			&i.VideoContentID,
 		); err != nil {
 			return nil, err
 		}
@@ -628,8 +630,8 @@ const updateProblemSettings = `-- name: UpdateProblemSettings :exec
 UPDATE problem_ext
 SET difficulty = $1, time_limit_ms = $2, memory_mb = $3,
     checker = $4, checker_file_id = $5,
-    editorial_content_id = $6
-WHERE content_id = $7
+    editorial_content_id = $6, video_content_id = $7
+WHERE content_id = $8
 `
 
 type UpdateProblemSettingsParams struct {
@@ -639,6 +641,7 @@ type UpdateProblemSettingsParams struct {
 	Checker            string
 	CheckerFileID      *int64
 	EditorialContentID *int64
+	VideoContentID     *int64
 	ContentID          int64
 }
 
@@ -650,6 +653,7 @@ func (q *Queries) UpdateProblemSettings(ctx context.Context, arg UpdateProblemSe
 		arg.Checker,
 		arg.CheckerFileID,
 		arg.EditorialContentID,
+		arg.VideoContentID,
 		arg.ContentID,
 	)
 	return err
@@ -695,4 +699,29 @@ func (q *Queries) UpsertTemplate(ctx context.Context, arg UpsertTemplateParams) 
 		arg.DriverCode,
 	)
 	return err
+}
+
+const withoutChosenVideo = `-- name: WithoutChosenVideo :many
+SELECT content_id FROM problem_ext WHERE content_id = ANY ($1::bigint[]) AND video_content_id IS NULL
+`
+
+// Of these problems, those with no editor-chosen video (the sync may auto-link them).
+func (q *Queries) WithoutChosenVideo(ctx context.Context, ids []int64) ([]int64, error) {
+	rows, err := q.db.Query(ctx, withoutChosenVideo, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var content_id int64
+		if err := rows.Scan(&content_id); err != nil {
+			return nil, err
+		}
+		items = append(items, content_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

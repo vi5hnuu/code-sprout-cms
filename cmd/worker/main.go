@@ -16,6 +16,7 @@ import (
 
 	"code-sprout-cms/internal/access"
 	"code-sprout-cms/internal/asset"
+	"code-sprout-cms/internal/collection"
 	"code-sprout-cms/internal/content"
 	"code-sprout-cms/internal/delivery"
 	"code-sprout-cms/internal/engagement"
@@ -31,6 +32,7 @@ import (
 	"code-sprout-cms/internal/submission"
 	"code-sprout-cms/internal/taxonomy"
 	"code-sprout-cms/internal/user"
+	"code-sprout-cms/internal/video"
 )
 
 func main() {
@@ -113,8 +115,20 @@ func run() error {
 		"judge_oldest_pending_seconds": "Age of the oldest queued or running submission.",
 	})
 
+	// Videos: mirror the configured YouTube channels (off without an API key).
+	video.NewService(database, reader) // installs card media for VIDEO rows the worker reads
+	yt := cfg.YouTube
+	syncer := video.NewSyncer(database, video.Config{
+		APIKey: yt.APIKey, ChannelIDs: yt.ChannelIDs, OwnerHandle: yt.OwnerHandle, ExcludedPlaylists: yt.ExcludedPlaylists,
+		Interval: yt.SyncInterval, DailyQuota: yt.DailyQuota,
+	}, contents, problems, collection.NewService(database, reader, policy), video.UserOwners{ByHandle: func(ctx context.Context, h string) (int64, error) {
+		u, err := users.ByHandle(ctx, h)
+		return u.ID, err
+	}}, m.VideoSync())
+
 	var wg sync.WaitGroup
 	wg.Go(func() { m.Serve(ctx, cfg.WorkerMetricsAddr) })
+	wg.Go(func() { syncer.Run(ctx) })
 	wg.Go(func() { dispatcher.Run(ctx) })
 	if cfg.Search.URL != "" {
 		wg.Go(func() { indexer.EnsureSettings(ctx) })

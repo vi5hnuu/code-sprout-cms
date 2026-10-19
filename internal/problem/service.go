@@ -97,6 +97,7 @@ func (s *Service) Studio(ctx context.Context, p auth.Principal, id int64) (Studi
 	v := StudioView{ContentID: id, Settings: Settings{
 		Difficulty: Difficulty(ext.Difficulty), TimeLimitMs: int(ext.TimeLimitMs), MemoryMB: int(ext.MemoryMb),
 		Checker: ext.Checker, CheckerFileID: ext.CheckerFileID, EditorialContentID: ext.EditorialContentID,
+		VideoContentID: ext.VideoContentID,
 	}}
 	if v.Samples, err = s.samples(ctx, q, id); err != nil {
 		return StudioView{}, err
@@ -145,12 +146,32 @@ func (s *Service) UpdateSettings(ctx context.Context, p auth.Principal, id int64
 	if err := s.contents.RequireStructureEdit(ctx, p, id, content.TypeProblem); err != nil {
 		return StudioView{}, err
 	}
+	if err := s.validateLinkTargets(ctx, in); err != nil {
+		return StudioView{}, err
+	}
 	if err := s.db.InTx(ctx, func(tx pgx.Tx) error {
-		if err := problemdb.New(tx).UpdateProblemSettings(ctx, problemdb.UpdateProblemSettingsParams{
+		q := problemdb.New(tx)
+		before, err := q.GetProblemExt(ctx, id)
+		if err != nil {
+			return err
+		}
+		if err := q.UpdateProblemSettings(ctx, problemdb.UpdateProblemSettingsParams{
 			ContentID: id, Difficulty: string(in.Difficulty), TimeLimitMs: int32(in.TimeLimitMs), MemoryMb: int32(in.MemoryMB),
-			Checker: in.Checker, CheckerFileID: in.CheckerFileID, EditorialContentID: in.EditorialContentID,
+			Checker: in.Checker, CheckerFileID: in.CheckerFileID, EditorialContentID: in.EditorialContentID, VideoContentID: in.VideoContentID,
 		}); err != nil {
 			return err
+		}
+		// The new editorial and video show at once on a live problem, like its difficulty.
+		cleared := before.VideoContentID != nil && in.VideoContentID == nil
+		if err := writeLinks(ctx, tx, id, in.EditorialContentID, in.VideoContentID, cleared); err != nil {
+			return err
+		}
+		if live, err := s.reader.LiveIDs(ctx, []int64{id}); err != nil {
+			return err
+		} else if len(live) > 0 {
+			if err := content.Touched(ctx, tx, id); err != nil {
+				return err
+			}
 		}
 		return audit.Record(ctx, tx, audit.Entry{ActorID: p.UserID, Action: "problem.settings", Entity: "content", EntityID: id, Data: in})
 	}); err != nil {
@@ -387,7 +408,69 @@ func (s *Service) onPublish(ctx context.Context, tx pgx.Tx, live content.LiveInf
 	if live.Visibility == content.VisibilityPublic {
 		listedAt = &live.PublishedAt
 	}
-	return problemdb.New(tx).SetListedAt(ctx, problemdb.SetListedAtParams{ContentID: live.ID, ListedAt: listedAt})
+	q := problemdb.New(tx)
+	if err := q.SetListedAt(ctx, problemdb.SetListedAtParams{ContentID: live.ID, ListedAt: listedAt}); err != nil {
+		return err
+	}
+	ext, err := q.GetProblemExt(ctx, live.ID)
+	if err != nil {
+		return err
+	}
+	return writeLinks(ctx, tx, live.ID, ext.EditorialContentID, ext.VideoContentID, false)
+}
+
+// writeLinks turns the problem's editorial and video settings into the page links readers see.
+// A chosen video replaces any automatic one; with none chosen, an automatic link (written by
+// the video sync) stays, unless the editor just cleared their choice (the sync re-links later).
+func writeLinks(ctx context.Context, tx pgx.Tx, id int64, editorial, video *int64, videoCleared bool) error {
+	if err := content.SetLinks(ctx, tx, id, "EDITORIAL", idsOf(editorial)); err != nil {
+		return err
+	}
+	if video != nil || videoCleared {
+		return content.SetLinks(ctx, tx, id, "VIDEO", idsOf(video))
+	}
+	return nil
+}
+
+func idsOf(id *int64) []int64 {
+	if id == nil {
+		return nil
+	}
+	return []int64{*id}
+}
+
+// validateLinkTargets checks the editorial is a live page (not a problem) and the video a
+// live VIDEO, so a typo never links readers to nothing.
+func (s *Service) validateLinkTargets(ctx context.Context, in Settings) error {
+	var ids []int64
+	ids = append(ids, idsOf(in.EditorialContentID)...)
+	ids = append(ids, idsOf(in.VideoContentID)...)
+	if len(ids) == 0 {
+		return nil
+	}
+	items, err := s.reader.ItemsByID(ctx, ids)
+	if err != nil {
+		return err
+	}
+	types := make(map[int64]content.Type, len(items))
+	for _, it := range items {
+		types[it.ID] = it.Type
+	}
+	f := map[string]string{}
+	if in.EditorialContentID != nil {
+		if t, ok := types[*in.EditorialContentID]; !ok || t == content.TypeProblem || t == content.TypeVideo {
+			f["editorialContentId"] = "Choose a live article or guide."
+		}
+	}
+	if in.VideoContentID != nil {
+		if t, ok := types[*in.VideoContentID]; !ok || t != content.TypeVideo {
+			f["videoContentId"] = "Choose a live video."
+		}
+	}
+	if len(f) > 0 {
+		return apperr.ValidationFailed(f)
+	}
+	return nil
 }
 
 func (s *Service) onUnpublish(ctx context.Context, tx pgx.Tx, id int64) error {

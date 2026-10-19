@@ -34,7 +34,7 @@ func (h *PublicHandler) Routes(mux *http.ServeMux) {
 func parseType(s string) (Type, bool) {
 	t := Type(strings.ToUpper(s))
 	switch t {
-	case TypeArticle, TypeBlog, TypeProblem, TypeTopicPage, TypeQuiz:
+	case TypeArticle, TypeBlog, TypeProblem, TypeTopicPage, TypeQuiz, TypeVideo:
 		return t, true
 	}
 	return "", false

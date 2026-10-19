@@ -37,6 +37,7 @@ import (
 	"code-sprout-cms/internal/submission"
 	"code-sprout-cms/internal/taxonomy"
 	"code-sprout-cms/internal/user"
+	"code-sprout-cms/internal/video"
 )
 
 func main() {
@@ -113,6 +114,7 @@ func run() error {
 	search.NewHandler(searchIndex, search.NewIndexer(searchIndex, reader, problems, enqueue), policy).Routes(api, auth.RequireUser,
 		limiter.Middleware("search", ratelimit.PerMinute(60, 20), clientIP))
 	problem.NewHandler(problems).Routes(api, auth.RequireUser)
+	video.NewHandler(video.NewService(database, reader)).Routes(api)
 	submissions := submission.NewService(database, rdb, judge.New(cfg.Judge.URL, cfg.Judge.APIKey, cfg.Judge.Runtimes), problems, problems, reader)
 	submission.NewHandler(submissions, clientIP).Routes(api, auth.RequireUser, submission.Limits{
 		Runs:        limiter.Middleware("runs", ratelimit.PerMinute(20, 5), clientIP),

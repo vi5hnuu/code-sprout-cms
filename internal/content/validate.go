@@ -166,15 +166,20 @@ func notPublishable(issues []PublishIssue) error {
 	}
 }
 
+// MinSummary is the shortest summary a live page may have (search results show it).
+const MinSummary = 50
+
 // metaIssues are the metadata rules a live page needs: search engines show the summary as
-// the description, and the category decides the URL section and breadcrumb.
-func metaIssues(m Meta) []PublishIssue {
+// the description, and the category decides the URL section and breadcrumb. Videos are
+// reached through the video hub and series and their URL has no section, so for them a
+// category is optional.
+func metaIssues(t Type, m Meta) []PublishIssue {
 	var out []PublishIssue
-	if m.Summary == nil || len([]rune(*m.Summary)) < 50 {
+	if m.Summary == nil || len([]rune(*m.Summary)) < MinSummary {
 		out = append(out, PublishIssue{Field: "summary", Code: "meta.summary",
 			Message: "Add a summary of at least 50 characters; search results show it."})
 	}
-	if m.CategoryID == nil {
+	if m.CategoryID == nil && t != TypeVideo {
 		out = append(out, PublishIssue{Field: "categoryId", Code: "meta.category", Message: "Choose a category."})
 	}
 	return out

@@ -16,6 +16,7 @@ import (
 //	PROBLEM     /problems/{slug}
 //	TOPIC_PAGE  /topics/{slug}
 //	QUIZ        /quiz/{slug}
+//	VIDEO       /videos/{slug}
 //
 // Locales other than "en" are prefixed: /hi/blog/{slug}.
 func PublicPath(t Type, locale, section, slug string) string {
@@ -35,6 +36,8 @@ func PublicPath(t Type, locale, section, slug string) string {
 		p = "/topics/" + s
 	case TypeQuiz:
 		p = "/quiz/" + s
+	case TypeVideo:
+		p = "/videos/" + s
 	}
 	if locale != "" && locale != "en" {
 		p = "/" + locale + p

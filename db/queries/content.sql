@@ -265,6 +265,34 @@ LEFT JOIN category cat ON cat.id = c.primary_category_id
 WHERE l.from_id = $1 AND c.status = 'PUBLISHED' AND c.visibility <> 'PRIVATE' AND c.deleted_at IS NULL
 ORDER BY l.kind, l.position;
 
+-- Live items that link to this one with a kind (e.g. the problems a video solves), newest first.
+-- Reads idx_content_link_to.
+-- name: ListLiveBacklinks :many
+SELECT c.id, c.type, c.locale, c.slug, c.title,
+       COALESCE(split_part(cat.path::text, '.', 1), '')::text AS section
+FROM content_link l
+JOIN content c ON c.id = l.from_id
+LEFT JOIN category cat ON cat.id = c.primary_category_id
+WHERE l.to_id = sqlc.arg(to_id) AND l.kind = sqlc.arg(kind)
+  AND c.status = 'PUBLISHED' AND c.visibility <> 'PRIVATE' AND c.deleted_at IS NULL
+ORDER BY c.id DESC
+LIMIT sqlc.arg(row_limit);
+
+-- Live problems whose normalised title is one of these phrases (exact-title matching of
+-- videos to problems). Reads idx_content_problem_title.
+-- name: LiveProblemsTitled :many
+SELECT id, norm_title(title)::text AS norm FROM content
+WHERE norm_title(title) = ANY (sqlc.arg(phrases)::text[])
+  AND type = 'PROBLEM' AND status = 'PUBLISHED' AND deleted_at IS NULL;
+
+-- Of these items, those that already link to a live item with this kind (a link to something
+-- taken down does not count, so it can be replaced).
+-- name: WithLinkOfKind :many
+SELECT DISTINCT l.from_id FROM content_link l
+JOIN content t ON t.id = l.to_id
+WHERE l.from_id = ANY (sqlc.arg(ids)::bigint[]) AND l.kind = sqlc.arg(kind)
+  AND t.status = 'PUBLISHED' AND t.deleted_at IS NULL;
+
 -- name: GetArticleExt :one
 SELECT * FROM article_ext WHERE content_id = $1;
 

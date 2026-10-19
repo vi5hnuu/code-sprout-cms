@@ -42,10 +42,22 @@ type Config struct {
 	Storage  StorageConfig
 	Judge    JudgeConfig
 	Search   SearchConfig
+	YouTube  YouTubeConfig
 	Delivery DeliveryConfig
 }
 
 // SearchConfig points at Meilisearch. Optional: without a URL, search answers 503.
+// YouTubeConfig mirrors channels' uploads as videos (internal/video). Without an API key the
+// sync stays off and everything else works.
+type YouTubeConfig struct {
+	APIKey            string
+	ChannelIDs        []string
+	OwnerHandle       string
+	ExcludedPlaylists []string
+	SyncInterval      time.Duration
+	DailyQuota        int
+}
+
 type SearchConfig struct {
 	URL    string
 	APIKey string
@@ -124,6 +136,12 @@ func Load() (Config, error) {
 
 		Judge:  JudgeConfig{URL: os.Getenv("JUDGE_URL"), APIKey: os.Getenv("JUDGE_API_KEY"), Runtimes: judgeRuntimes(&errs)},
 		Search: SearchConfig{URL: os.Getenv("SEARCH_URL"), APIKey: os.Getenv("SEARCH_API_KEY"), Index: envOr("SEARCH_INDEX", "content")},
+		YouTube: YouTubeConfig{
+			APIKey: os.Getenv("YOUTUBE_API_KEY"), ChannelIDs: listOr("YOUTUBE_CHANNEL_IDS"), OwnerHandle: os.Getenv("YOUTUBE_OWNER_HANDLE"),
+			ExcludedPlaylists: listOr("YOUTUBE_EXCLUDED_PLAYLISTS"),
+			SyncInterval:      durationOr("YOUTUBE_SYNC_INTERVAL", 15*time.Minute, &errs),
+			DailyQuota:        intOr("YOUTUBE_DAILY_QUOTA", 5000, &errs),
+		},
 		Delivery: DeliveryConfig{
 			RevalidateURL: os.Getenv("WEB_REVALIDATE_URL"), RevalidateSecret: os.Getenv("WEB_REVALIDATE_SECRET"),
 			CloudflareZoneID: os.Getenv("CLOUDFLARE_ZONE_ID"), CloudflareAPIToken: os.Getenv("CLOUDFLARE_API_TOKEN"),

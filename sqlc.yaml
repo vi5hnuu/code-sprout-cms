@@ -122,3 +122,11 @@ sql:
         <<: *go
         package: collectiondb
         out: internal/collection/collectiondb
+  - engine: postgresql
+    schema: db/migrations
+    queries: db/queries/video.sql
+    gen:
+      go:
+        <<: *go
+        package: videodb
+        out: internal/video/videodb

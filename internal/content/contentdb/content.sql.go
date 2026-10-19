@@ -897,6 +897,62 @@ func (q *Queries) ListContentTagIDs(ctx context.Context, contentID int64) ([]int
 	return items, nil
 }
 
+const listLiveBacklinks = `-- name: ListLiveBacklinks :many
+SELECT c.id, c.type, c.locale, c.slug, c.title,
+       COALESCE(split_part(cat.path::text, '.', 1), '')::text AS section
+FROM content_link l
+JOIN content c ON c.id = l.from_id
+LEFT JOIN category cat ON cat.id = c.primary_category_id
+WHERE l.to_id = $1 AND l.kind = $2
+  AND c.status = 'PUBLISHED' AND c.visibility <> 'PRIVATE' AND c.deleted_at IS NULL
+ORDER BY c.id DESC
+LIMIT $3
+`
+
+type ListLiveBacklinksParams struct {
+	ToID     int64
+	Kind     string
+	RowLimit int32
+}
+
+type ListLiveBacklinksRow struct {
+	ID      int64
+	Type    string
+	Locale  string
+	Slug    string
+	Title   string
+	Section string
+}
+
+// Live items that link to this one with a kind (e.g. the problems a video solves), newest first.
+// Reads idx_content_link_to.
+func (q *Queries) ListLiveBacklinks(ctx context.Context, arg ListLiveBacklinksParams) ([]ListLiveBacklinksRow, error) {
+	rows, err := q.db.Query(ctx, listLiveBacklinks, arg.ToID, arg.Kind, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListLiveBacklinksRow{}
+	for rows.Next() {
+		var i ListLiveBacklinksRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Type,
+			&i.Locale,
+			&i.Slug,
+			&i.Title,
+			&i.Section,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listLiveByAuthor = `-- name: ListLiveByAuthor :many
 SELECT id, type, locale, slug, title, summary, status, review_state, visibility, access, author_id, primary_category_id, last_rev_no, draft_rev_no, published_rev_no, scheduled_at, published_at, last_published_at, translation_group_id, created_at, updated_at, deleted_at FROM content
 WHERE author_id = $1
@@ -1744,6 +1800,39 @@ func (q *Queries) LiveIDsBySlug(ctx context.Context, arg LiveIDsBySlugParams) ([
 	return items, nil
 }
 
+const liveProblemsTitled = `-- name: LiveProblemsTitled :many
+SELECT id, norm_title(title)::text AS norm FROM content
+WHERE norm_title(title) = ANY ($1::text[])
+  AND type = 'PROBLEM' AND status = 'PUBLISHED' AND deleted_at IS NULL
+`
+
+type LiveProblemsTitledRow struct {
+	ID   int64
+	Norm string
+}
+
+// Live problems whose normalised title is one of these phrases (exact-title matching of
+// videos to problems). Reads idx_content_problem_title.
+func (q *Queries) LiveProblemsTitled(ctx context.Context, phrases []string) ([]LiveProblemsTitledRow, error) {
+	rows, err := q.db.Query(ctx, liveProblemsTitled, phrases)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LiveProblemsTitledRow{}
+	for rows.Next() {
+		var i LiveProblemsTitledRow
+		if err := rows.Scan(&i.ID, &i.Norm); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markRevisionArchived = `-- name: MarkRevisionArchived :exec
 UPDATE content_revision SET body_md = NULL, archive_file_id = $1
 WHERE content_id = $2 AND rev_no = $3 AND body_md IS NOT NULL
@@ -2108,4 +2197,38 @@ func (q *Queries) UpsertSlugRedirect(ctx context.Context, arg UpsertSlugRedirect
 		arg.ContentID,
 	)
 	return err
+}
+
+const withLinkOfKind = `-- name: WithLinkOfKind :many
+SELECT DISTINCT l.from_id FROM content_link l
+JOIN content t ON t.id = l.to_id
+WHERE l.from_id = ANY ($1::bigint[]) AND l.kind = $2
+  AND t.status = 'PUBLISHED' AND t.deleted_at IS NULL
+`
+
+type WithLinkOfKindParams struct {
+	Ids  []int64
+	Kind string
+}
+
+// Of these items, those that already link to a live item with this kind (a link to something
+// taken down does not count, so it can be replaced).
+func (q *Queries) WithLinkOfKind(ctx context.Context, arg WithLinkOfKindParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, withLinkOfKind, arg.Ids, arg.Kind)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var from_id int64
+		if err := rows.Scan(&from_id); err != nil {
+			return nil, err
+		}
+		items = append(items, from_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

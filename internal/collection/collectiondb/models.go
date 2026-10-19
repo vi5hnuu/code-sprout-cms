@@ -18,4 +18,6 @@ type Collection struct {
 	Visibility  string
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+	Source      *string
+	ExternalRef *string
 }
