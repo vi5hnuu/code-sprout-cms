@@ -52,6 +52,15 @@ func (n *Notes) Put(ctx context.Context, p auth.Principal, contentID int64, body
 	if strings.TrimSpace(body) == "" {
 		return nil, q.DeleteNote(ctx, librarydb.DeleteNoteParams{UserID: p.UserID, ContentID: contentID})
 	}
+	// Notes attach to live items only: otherwise any id would accept a note (orphan rows, and
+	// storage anyone could fill).
+	items, err := n.items.ItemsByID(ctx, []int64{contentID})
+	if err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
+		return nil, apperr.NotFound("content.not_found", "No such page.")
+	}
 	r, err := q.UpsertNote(ctx, librarydb.UpsertNoteParams{UserID: p.UserID, ContentID: contentID, BodyMd: body})
 	if err != nil {
 		return nil, err
