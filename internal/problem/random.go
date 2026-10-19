@@ -1,9 +1,13 @@
 package problem
 
 import (
+	"cmp"
 	"context"
 	"math/rand/v2"
 
+	"github.com/jackc/pgx/v5"
+
+	"code-sprout-cms/internal/content"
 	"code-sprout-cms/internal/platform/apperr"
 	"code-sprout-cms/internal/platform/db"
 	"code-sprout-cms/internal/problem/problemdb"
@@ -16,6 +20,13 @@ type RandomFilter struct {
 }
 
 var errNoRandom = apperr.NotFound("problem.none_match", "No problem matches these filters yet.")
+
+// A tagged pick reads the tag in batches from the content domain and keeps the first listed
+// problem; the scan is capped so one request never walks a huge tag end to end.
+const (
+	taggedBatch      = 100
+	taggedMaxBatches = 10
+)
 
 // Random returns one listed problem matching the filter (interview mode, "pick for me").
 //
@@ -42,14 +53,10 @@ func (s *Service) Random(ctx context.Context, f RandomFilter) (ListItem, error) 
 		if err != nil {
 			return ListItem{}, err
 		}
-		b, err := q.TaggedIDBounds(ctx, tag.ID)
-		if err != nil {
+		if lo, hi, err = s.reader.TagBounds(ctx, tag.ID); err != nil {
 			return ListItem{}, err
 		}
-		lo, hi = b.Lo, b.Hi
-		from = func(p int64) (int64, error) {
-			return q.TaggedProblemFrom(ctx, problemdb.TaggedProblemFromParams{TagID: tag.ID, Pivot: p, Difficulty: diff})
-		}
+		from = func(p int64) (int64, error) { return s.taggedFrom(ctx, q, tag.ID, diff, p) }
 	case diff != nil:
 		b, err := q.ListedIDBoundsByDifficulty(ctx, *diff)
 		if err != nil {
@@ -89,4 +96,22 @@ func (s *Service) Random(ctx context.Context, f RandomFilter) (ListItem, error) 
 		return ListItem{}, errNoRandom
 	}
 	return item, nil
+}
+
+// taggedFrom is the first listed problem (of the difficulty, if given) with the tag, at or
+// after pivot. It returns pgx.ErrNoRows when none is found within the scan cap, like the
+// single-query pickers, so the caller wraps the same way.
+func (s *Service) taggedFrom(ctx context.Context, q *problemdb.Queries, tagID int64, diff *string, pivot int64) (int64, error) {
+	for range taggedMaxBatches {
+		ids, err := s.reader.TaggedFrom(ctx, tagID, content.TypeProblem, pivot, taggedBatch)
+		if err != nil || len(ids) == 0 {
+			return 0, cmp.Or(err, pgx.ErrNoRows)
+		}
+		id, err := q.FirstListedAmong(ctx, problemdb.FirstListedAmongParams{Ids: ids, Difficulty: diff})
+		if !db.IsNoRows(err) {
+			return id, err
+		}
+		pivot = ids[len(ids)-1] + 1
+	}
+	return 0, pgx.ErrNoRows
 }

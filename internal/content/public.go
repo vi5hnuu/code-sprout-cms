@@ -408,6 +408,17 @@ func (r *Reader) listVideoMedia(ctx context.Context, rows []contentdb.Content) (
 }
 
 // Backlinks returns live items linking to id with kind (e.g. the problems a video solves).
+// TagBounds is the smallest and largest live item id carrying a tag; 0, 0 when it has none.
+func (r *Reader) TagBounds(ctx context.Context, tagID int64) (lo, hi int64, err error) {
+	b, err := contentdb.New(r.db.Replica).TagIDBounds(ctx, tagID)
+	return b.Lo, b.Hi, err
+}
+
+// TaggedFrom returns up to limit live items of type t carrying a tag, ids ascending from pivot.
+func (r *Reader) TaggedFrom(ctx context.Context, tagID int64, t Type, pivot int64, limit int32) ([]int64, error) {
+	return contentdb.New(r.db.Replica).TaggedOfTypeFrom(ctx, contentdb.TaggedOfTypeFromParams{TagID: tagID, Pivot: pivot, Type: string(t), RowLimit: limit})
+}
+
 func (r *Reader) Backlinks(ctx context.Context, id int64, kind string, limit int32) ([]Link, error) {
 	rows, err := contentdb.New(r.db.Replica).ListLiveBacklinks(ctx, contentdb.ListLiveBacklinksParams{ToID: id, Kind: kind, RowLimit: limit})
 	if err != nil {

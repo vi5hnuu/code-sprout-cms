@@ -2095,6 +2095,67 @@ func (q *Queries) SoftDeleteContent(ctx context.Context, id int64) error {
 	return err
 }
 
+const tagIDBounds = `-- name: TagIDBounds :one
+SELECT coalesce(min(content_id), 0)::bigint AS lo, coalesce(max(content_id), 0)::bigint AS hi FROM content_tag
+WHERE tag_id = $1 AND published_at IS NOT NULL
+`
+
+type TagIDBoundsRow struct {
+	Lo int64
+	Hi int64
+}
+
+// Smallest and largest live item id carrying a tag (random picks within a tag).
+func (q *Queries) TagIDBounds(ctx context.Context, tagID int64) (TagIDBoundsRow, error) {
+	row := q.db.QueryRow(ctx, tagIDBounds, tagID)
+	var i TagIDBoundsRow
+	err := row.Scan(&i.Lo, &i.Hi)
+	return i, err
+}
+
+const taggedOfTypeFrom = `-- name: TaggedOfTypeFrom :many
+SELECT ct.content_id FROM content_tag ct
+JOIN content c ON c.id = ct.content_id
+WHERE ct.tag_id = $1 AND ct.published_at IS NOT NULL AND ct.content_id >= $2
+  AND c.type = $3
+ORDER BY ct.content_id
+LIMIT $4
+`
+
+type TaggedOfTypeFromParams struct {
+	TagID    int64
+	Pivot    int64
+	Type     string
+	RowLimit int32
+}
+
+// Live items of one type carrying a tag, in id order from a pivot: walks the content_tag
+// primary key, so each batch costs the same however large the tag is.
+func (q *Queries) TaggedOfTypeFrom(ctx context.Context, arg TaggedOfTypeFromParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, taggedOfTypeFrom,
+		arg.TagID,
+		arg.Pivot,
+		arg.Type,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var content_id int64
+		if err := rows.Scan(&content_id); err != nil {
+			return nil, err
+		}
+		items = append(items, content_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const upsertArticleExt = `-- name: UpsertArticleExt :exec
 INSERT INTO article_ext (content_id, level) VALUES ($1, $2)
 ON CONFLICT (content_id) DO UPDATE SET level = EXCLUDED.level

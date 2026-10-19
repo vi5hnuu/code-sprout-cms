@@ -318,6 +318,21 @@ WHERE tag_id = sqlc.arg(tag_id) AND published_at IS NOT NULL
 ORDER BY published_at DESC, content_id DESC
 LIMIT sqlc.arg(row_limit);
 
+-- Smallest and largest live item id carrying a tag (random picks within a tag).
+-- name: TagIDBounds :one
+SELECT coalesce(min(content_id), 0)::bigint AS lo, coalesce(max(content_id), 0)::bigint AS hi FROM content_tag
+WHERE tag_id = $1 AND published_at IS NOT NULL;
+
+-- Live items of one type carrying a tag, in id order from a pivot: walks the content_tag
+-- primary key, so each batch costs the same however large the tag is.
+-- name: TaggedOfTypeFrom :many
+SELECT ct.content_id FROM content_tag ct
+JOIN content c ON c.id = ct.content_id
+WHERE ct.tag_id = sqlc.arg(tag_id) AND ct.published_at IS NOT NULL AND ct.content_id >= sqlc.arg(pivot)
+  AND c.type = sqlc.arg(type)
+ORDER BY ct.content_id
+LIMIT sqlc.arg(row_limit);
+
 -- Everything search needs for one live item, in one round trip.
 -- name: GetIndexable :one
 SELECT c.id, c.type, c.locale, c.slug, c.title, c.summary, c.access, c.visibility, c.status,

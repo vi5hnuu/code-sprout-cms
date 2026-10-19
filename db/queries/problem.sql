@@ -125,16 +125,10 @@ SELECT content_id FROM problem_ext
 WHERE listed_at IS NOT NULL AND difficulty = sqlc.arg(difficulty) AND content_id >= sqlc.arg(pivot)
 ORDER BY content_id LIMIT 1;
 
--- Tagged picks walk the tag's own index (content_tag primary key) in id order and keep the
--- first listed problem; difficulty, when given, is a filter on that walk.
--- name: TaggedIDBounds :one
-SELECT coalesce(min(content_id), 0)::bigint AS lo, coalesce(max(content_id), 0)::bigint AS hi FROM content_tag
-WHERE tag_id = $1 AND published_at IS NOT NULL;
-
--- name: TaggedProblemFrom :one
-SELECT ct.content_id FROM content_tag ct
-JOIN problem_ext pe ON pe.content_id = ct.content_id
-WHERE ct.tag_id = sqlc.arg(tag_id) AND ct.published_at IS NOT NULL AND ct.content_id >= sqlc.arg(pivot)
-  AND pe.listed_at IS NOT NULL
-  AND (sqlc.narg(difficulty)::text IS NULL OR pe.difficulty = sqlc.narg(difficulty)::text)
-ORDER BY ct.content_id LIMIT 1;
+-- Tagged picks: the content domain walks the tag in id order (content.Reader.TaggedFrom) and
+-- this keeps the first listed problem of each batch, optionally of one difficulty.
+-- name: FirstListedAmong :one
+SELECT content_id FROM problem_ext
+WHERE content_id = ANY (sqlc.arg(ids)::bigint[]) AND listed_at IS NOT NULL
+  AND (sqlc.narg(difficulty)::text IS NULL OR difficulty = sqlc.narg(difficulty)::text)
+ORDER BY content_id LIMIT 1;

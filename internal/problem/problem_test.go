@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"code-sprout-cms/internal/access"
 	"code-sprout-cms/internal/arenatest"
 	"code-sprout-cms/internal/content"
 	"code-sprout-cms/internal/judge"
@@ -14,6 +15,7 @@ import (
 	"code-sprout-cms/internal/platform/page"
 	"code-sprout-cms/internal/platform/testenv"
 	"code-sprout-cms/internal/problem"
+	"code-sprout-cms/internal/taxonomy"
 )
 
 func cases(tag string, n int) []judge.TestCase {
@@ -157,5 +159,34 @@ func TestRandomPicksListedProblems(t *testing.T) {
 	bad := problem.Difficulty("IMPOSSIBLE")
 	if _, err := e.Problems.Random(ctx, problem.RandomFilter{Difficulty: &bad}); err == nil {
 		t.Fatal("invalid difficulty accepted")
+	}
+}
+
+// A pick within a tag walks the tag through the content domain and keeps listed problems of
+// the requested difficulty.
+func TestRandomWithinTag(t *testing.T) {
+	e := arenatest.New(t)
+	ctx := context.Background()
+	tax := taxonomy.NewService(e.DB, access.NewPolicy(e.DB.Primary))
+	tag, err := tax.CreateTag(ctx, testenv.Admin(t, e.DB), taxonomy.CreateTag{Kind: taxonomy.TagCompany, Slug: testenv.Unique("co"), Name: "Acme"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	slug := testenv.Unique("tagged")
+	id := e.Publish(slug, []problem.Sample{{Input: "1", Output: "1"}}, []judge.TestCase{{Stdin: slug, Expected: "1"}}, nil, tag.ID)
+	filter := "company:" + tag.Slug
+
+	for range 5 {
+		item, err := e.Problems.Random(ctx, problem.RandomFilter{Tag: filter})
+		if err != nil || item.ID != id {
+			t.Fatalf("tagged pick = %d, %v; want %d", item.ID, err, id)
+		}
+	}
+	easy, hard := problem.Easy, problem.Hard
+	if item, err := e.Problems.Random(ctx, problem.RandomFilter{Tag: filter, Difficulty: &easy}); err != nil || item.ID != id {
+		t.Fatalf("tagged easy pick = %d, %v", item.ID, err)
+	}
+	if _, err := e.Problems.Random(ctx, problem.RandomFilter{Tag: filter, Difficulty: &hard}); err == nil {
+		t.Fatal("hard pick from a tag with only an easy problem")
 	}
 }

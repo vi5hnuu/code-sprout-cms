@@ -100,13 +100,13 @@ func (e *Env) UploadTestSet(p auth.Principal, cases []judge.TestCase) int64 {
 	return ticket.File.ID
 }
 
-// Draft creates a problem draft (statement + limits) by the author.
-func (e *Env) Draft(slug string) content.Draft {
+// Draft creates a problem draft (statement + limits) by the author, with optional tags.
+func (e *Env) Draft(slug string, tagIDs ...int64) content.Draft {
 	e.T.Helper()
 	summary := "Return the sum of two integers read from standard input, a warm-up for the arena."
 	d, err := e.Problems.Create(context.Background(), e.Author, problem.CreateInput{
 		DraftInput: content.DraftInput{
-			Meta: content.Meta{Title: "Sum " + slug, Slug: slug, Summary: &summary, CategoryID: &e.Category.ID},
+			Meta: content.Meta{Title: "Sum " + slug, Slug: slug, Summary: &summary, CategoryID: &e.Category.ID, TagIDs: tagIDs},
 			Body: "## Task\n\nRead two integers and print their sum.\n",
 		},
 		Difficulty: problem.Easy, TimeLimitMs: 1000, MemoryMB: 128,
@@ -117,11 +117,12 @@ func (e *Env) Draft(slug string) content.Draft {
 	return d
 }
 
-// Publish sets up samples, a template and the given hidden cases, then publishes the problem.
-func (e *Env) Publish(slug string, samples []problem.Sample, hidden []judge.TestCase, driver *string) int64 {
+// Publish sets up samples, a template and the given hidden cases, then publishes the problem
+// (with optional tags).
+func (e *Env) Publish(slug string, samples []problem.Sample, hidden []judge.TestCase, driver *string, tagIDs ...int64) int64 {
 	e.T.Helper()
 	ctx := context.Background()
-	d := e.Draft(slug)
+	d := e.Draft(slug, tagIDs...)
 	if _, err := e.Problems.ReplaceSamples(ctx, e.Author, d.ID, samples); err != nil {
 		e.T.Fatal(err)
 	}

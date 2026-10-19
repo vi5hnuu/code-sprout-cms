@@ -47,6 +47,27 @@ func (q *Queries) DeleteTemplate(ctx context.Context, arg DeleteTemplateParams) 
 	return result.RowsAffected(), nil
 }
 
+const firstListedAmong = `-- name: FirstListedAmong :one
+SELECT content_id FROM problem_ext
+WHERE content_id = ANY ($1::bigint[]) AND listed_at IS NOT NULL
+  AND ($2::text IS NULL OR difficulty = $2::text)
+ORDER BY content_id LIMIT 1
+`
+
+type FirstListedAmongParams struct {
+	Ids        []int64
+	Difficulty *string
+}
+
+// Tagged picks: the content domain walks the tag in id order (content.Reader.TaggedFrom) and
+// this keeps the first listed problem of each batch, optionally of one difficulty.
+func (q *Queries) FirstListedAmong(ctx context.Context, arg FirstListedAmongParams) (int64, error) {
+	row := q.db.QueryRow(ctx, firstListedAmong, arg.Ids, arg.Difficulty)
+	var content_id int64
+	err := row.Scan(&content_id)
+	return content_id, err
+}
+
 const getProblemExt = `-- name: GetProblemExt :one
 SELECT content_id, difficulty, time_limit_ms, memory_mb, checker, checker_file_id, active_test_set_id, editorial_content_id, submission_count, accepted_count, listed_at, video_content_id FROM problem_ext WHERE content_id = $1
 `
@@ -583,47 +604,6 @@ type SetListedAtParams struct {
 func (q *Queries) SetListedAt(ctx context.Context, arg SetListedAtParams) error {
 	_, err := q.db.Exec(ctx, setListedAt, arg.ListedAt, arg.ContentID)
 	return err
-}
-
-const taggedIDBounds = `-- name: TaggedIDBounds :one
-SELECT coalesce(min(content_id), 0)::bigint AS lo, coalesce(max(content_id), 0)::bigint AS hi FROM content_tag
-WHERE tag_id = $1 AND published_at IS NOT NULL
-`
-
-type TaggedIDBoundsRow struct {
-	Lo int64
-	Hi int64
-}
-
-// Tagged picks walk the tag's own index (content_tag primary key) in id order and keep the
-// first listed problem; difficulty, when given, is a filter on that walk.
-func (q *Queries) TaggedIDBounds(ctx context.Context, tagID int64) (TaggedIDBoundsRow, error) {
-	row := q.db.QueryRow(ctx, taggedIDBounds, tagID)
-	var i TaggedIDBoundsRow
-	err := row.Scan(&i.Lo, &i.Hi)
-	return i, err
-}
-
-const taggedProblemFrom = `-- name: TaggedProblemFrom :one
-SELECT ct.content_id FROM content_tag ct
-JOIN problem_ext pe ON pe.content_id = ct.content_id
-WHERE ct.tag_id = $1 AND ct.published_at IS NOT NULL AND ct.content_id >= $2
-  AND pe.listed_at IS NOT NULL
-  AND ($3::text IS NULL OR pe.difficulty = $3::text)
-ORDER BY ct.content_id LIMIT 1
-`
-
-type TaggedProblemFromParams struct {
-	TagID      int64
-	Pivot      int64
-	Difficulty *string
-}
-
-func (q *Queries) TaggedProblemFrom(ctx context.Context, arg TaggedProblemFromParams) (int64, error) {
-	row := q.db.QueryRow(ctx, taggedProblemFrom, arg.TagID, arg.Pivot, arg.Difficulty)
-	var content_id int64
-	err := row.Scan(&content_id)
-	return content_id, err
 }
 
 const updateProblemSettings = `-- name: UpdateProblemSettings :exec
