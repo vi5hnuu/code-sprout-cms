@@ -21,6 +21,7 @@ type Indexable struct {
 	Text         string   // derived plain text (no code), from content_render
 	Tags         []string // names
 	CategoryPath string   // URL form, e.g. dsa/algorithms
+	CategoryName string   // the category's display name, e.g. "Algorithms"
 	Access       string
 	PublishedAt  time.Time
 	UpdatedAt    time.Time
@@ -42,12 +43,19 @@ func (r *Reader) Indexable(ctx context.Context, id int64) (Indexable, bool, erro
 	ix := Indexable{
 		ID: row.ID, Type: Type(row.Type), Locale: row.Locale, Slug: row.Slug, Title: row.Title,
 		Text: row.PlainText, Tags: row.TagNames, CategoryPath: strings.ReplaceAll(row.CategoryPath, ".", "/"),
-		Access: row.Access, PublishedAt: *row.PublishedAt, UpdatedAt: *row.LastPublishedAt,
+		CategoryName: row.CategoryName, Access: row.Access, PublishedAt: *row.PublishedAt, UpdatedAt: *row.LastPublishedAt,
 	}
 	if row.Summary != nil {
 		ix.Summary = *row.Summary
 	}
 	return ix, true, nil
+}
+
+// LiveIDsInCategoryAfter walks the live public ids filed under a category's subtree, in order.
+func (r *Reader) LiveIDsInCategoryAfter(ctx context.Context, categoryID, after int64, limit int32) ([]int64, error) {
+	return contentdb.New(r.db.Replica).ListLiveIDsInCategoryAfter(ctx, contentdb.ListLiveIDsInCategoryAfterParams{
+		CategoryID: categoryID, AfterID: after, RowLimit: limit,
+	})
 }
 
 // LiveIDsAfter walks live public ids in order (for full reindexes).

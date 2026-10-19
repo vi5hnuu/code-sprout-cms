@@ -296,6 +296,7 @@ SELECT c.id, c.type, c.locale, c.slug, c.title, c.summary, c.access, c.visibilit
        c.published_at, c.last_published_at, c.deleted_at,
        COALESCE(r.plain_text, '')::text AS plain_text,
        COALESCE(cat.path::text, '')::text AS category_path,
+       COALESCE(cat.name, '')::text AS category_name,
        COALESCE((SELECT array_agg(t.name ORDER BY t.name) FROM content_tag ct JOIN tag t ON t.id = ct.tag_id
                  WHERE ct.content_id = c.id), '{}')::text[] AS tag_names
 FROM content c
@@ -308,6 +309,16 @@ WHERE c.id = $1;
 SELECT id FROM content
 WHERE status = 'PUBLISHED' AND visibility = 'PUBLIC' AND deleted_at IS NULL AND id > sqlc.arg(after_id)
 ORDER BY id
+LIMIT sqlc.arg(row_limit);
+
+-- Keyset walk over live public items filed anywhere under one category (its subtree, by the
+-- category's current path), for re-indexing after the category is renamed or moved.
+-- name: ListLiveIDsInCategoryAfter :many
+SELECT c.id FROM content c
+JOIN category cat ON cat.id = c.primary_category_id
+WHERE cat.path <@ (SELECT root.path FROM category root WHERE root.id = sqlc.arg(category_id))
+  AND c.status = 'PUBLISHED' AND c.visibility = 'PUBLIC' AND c.deleted_at IS NULL AND c.id > sqlc.arg(after_id)
+ORDER BY c.id
 LIMIT sqlc.arg(row_limit);
 
 -- ── Sitemaps ────────────────────────────────────────────────────────────────

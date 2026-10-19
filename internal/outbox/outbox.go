@@ -24,6 +24,9 @@ const (
 	TopicTagChanged         = "tag.changed"         // TagEvent
 	TopicCommentsChanged    = "comments.changed"    // CommentsEvent: a thread's public view changed
 	TopicSearchReindex      = "search.reindex"      // {"after": id}: one chunk of a full rebuild
+	// {"categoryId": id, "after": id}: one chunk of re-indexing a category's items after it was
+	// renamed or moved (their documents carry its path and name).
+	TopicSearchReindexCategory = "search.reindex_category"
 )
 
 type CommentsEvent struct {

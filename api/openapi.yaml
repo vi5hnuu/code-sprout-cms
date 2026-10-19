@@ -2934,7 +2934,7 @@ components:
           type: array
           items:
             type: object
-            required: [id, type, locale, slug, title, snippet, category, publishedAt]
+            required: [id, type, locale, slug, title, snippet, category, categoryName, publishedAt]
             properties:
               id: { type: integer, format: int64 }
               type: { $ref: "#/components/schemas/ContentType" }
@@ -2942,7 +2942,8 @@ components:
               slug: { type: string }
               title: { type: string }
               snippet: { type: string }
-              category: { type: string }
+              category: { type: string, description: "URL path of the item's category, e.g. dsa/arrays (empty when none)." }
+              categoryName: { type: string, description: "The category's display name, e.g. Arrays (empty when none)." }
               difficulty: { type: string }
               publishedAt: { type: integer, description: Unix seconds. }
         estimatedTotal: { type: integer }

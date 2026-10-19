@@ -20,18 +20,19 @@ import (
 
 // Document is one searchable item.
 type Document struct {
-	ID          int64    `json:"id"`
-	Type        string   `json:"type"`
-	Locale      string   `json:"locale"`
-	Slug        string   `json:"slug"`
-	Title       string   `json:"title"`
-	Summary     string   `json:"summary"`
-	Body        string   `json:"body"`
-	Tags        []string `json:"tags"`
-	Category    string   `json:"category"`
-	Difficulty  string   `json:"difficulty,omitempty"`
-	Access      string   `json:"access"`
-	PublishedAt int64    `json:"publishedAt"` // unix seconds, sortable
+	ID           int64    `json:"id"`
+	Type         string   `json:"type"`
+	Locale       string   `json:"locale"`
+	Slug         string   `json:"slug"`
+	Title        string   `json:"title"`
+	Summary      string   `json:"summary"`
+	Body         string   `json:"body"`
+	Tags         []string `json:"tags"`
+	Category     string   `json:"category"`
+	CategoryName string   `json:"categoryName"`
+	Difficulty   string   `json:"difficulty,omitempty"`
+	Access       string   `json:"access"`
+	PublishedAt  int64    `json:"publishedAt"` // unix seconds, sortable
 }
 
 type Query struct {
@@ -52,15 +53,16 @@ const (
 )
 
 type Hit struct {
-	ID          int64  `json:"id"`
-	Type        string `json:"type"`
-	Locale      string `json:"locale"`
-	Slug        string `json:"slug"`
-	Title       string `json:"title"`
-	Snippet     string `json:"snippet"`
-	Category    string `json:"category"`
-	Difficulty  string `json:"difficulty,omitempty"`
-	PublishedAt int64  `json:"publishedAt"`
+	ID           int64  `json:"id"`
+	Type         string `json:"type"`
+	Locale       string `json:"locale"`
+	Slug         string `json:"slug"`
+	Title        string `json:"title"`
+	Snippet      string `json:"snippet"`
+	Category     string `json:"category"`
+	CategoryName string `json:"categoryName"`
+	Difficulty   string `json:"difficulty,omitempty"`
+	PublishedAt  int64  `json:"publishedAt"`
 }
 
 type Result struct {
@@ -100,7 +102,7 @@ func (m *Meili) Configure(ctx context.Context) error {
 		"searchableAttributes": []string{"title", "tags", "summary", "body"},
 		"filterableAttributes": []string{"type", "locale", "difficulty", "access", "category"},
 		"sortableAttributes":   []string{"publishedAt"},
-		"displayedAttributes":  []string{"id", "type", "locale", "slug", "title", "summary", "body", "category", "difficulty", "publishedAt"},
+		"displayedAttributes":  []string{"id", "type", "locale", "slug", "title", "summary", "body", "category", "categoryName", "difficulty", "publishedAt"},
 	}
 	return m.do(ctx, http.MethodPatch, "/indexes/"+url.PathEscape(m.index)+"/settings", settings, nil)
 }
@@ -131,7 +133,7 @@ func (m *Meili) Search(ctx context.Context, q Query) (Result, error) {
 	add("difficulty", q.Difficulty)
 	body := map[string]any{
 		"q": q.Text, "limit": q.Limit, "offset": q.Offset, "filter": strings.Join(filters, " AND "),
-		"attributesToRetrieve":  []string{"id", "type", "locale", "slug", "title", "category", "difficulty", "publishedAt"},
+		"attributesToRetrieve":  []string{"id", "type", "locale", "slug", "title", "category", "categoryName", "difficulty", "publishedAt"},
 		"attributesToHighlight": []string{"title"},
 		"attributesToCrop":      []string{"summary", "body"},
 		"cropLength":            24,

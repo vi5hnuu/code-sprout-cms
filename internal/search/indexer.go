@@ -24,6 +24,7 @@ const reindexChunk = 2000
 type Source interface {
 	Indexable(ctx context.Context, id int64) (content.Indexable, bool, error)
 	LiveIDsAfter(ctx context.Context, after int64, limit int32) ([]int64, error)
+	LiveIDsInCategoryAfter(ctx context.Context, categoryID, after int64, limit int32) ([]int64, error)
 }
 
 type Difficulties interface {
@@ -42,13 +43,52 @@ func NewIndexer(index Index, src Source, diffs Difficulties, enqueue func(ctx co
 	return &Indexer{index: index, src: src, diffs: diffs, enqueue: enqueue}
 }
 
+// Subscriber is where the indexer registers its event handlers (the outbox dispatcher).
+type Subscriber interface {
+	On(topic string, h outbox.Handler)
+}
+
 // Register subscribes the indexer to the events that change what is searchable.
-func (ix *Indexer) Register(d *outbox.Dispatcher) {
+func (ix *Indexer) Register(d Subscriber) {
 	sync := func(ctx context.Context, e outbox.Event) error { return ix.Sync(ctx, []int64{e.AggregateID}) }
 	d.On(outbox.TopicContentPublished, sync)
 	d.On(outbox.TopicContentUpdated, sync)
 	d.On(outbox.TopicContentUnpublished, sync)
 	d.On(outbox.TopicSearchReindex, ix.reindexChunk)
+	// A renamed or moved category changes the path and name every item under it carries.
+	d.On(outbox.TopicCategoryChanged, func(ctx context.Context, e outbox.Event) error {
+		return ix.reindexCategoryChunk(ctx, categoryCursor{CategoryID: e.AggregateID})
+	})
+	d.On(outbox.TopicSearchReindexCategory, func(ctx context.Context, e outbox.Event) error {
+		var cur categoryCursor
+		if err := json.Unmarshal(e.Payload, &cur); err != nil {
+			return err
+		}
+		return ix.reindexCategoryChunk(ctx, cur)
+	})
+}
+
+type categoryCursor struct {
+	CategoryID int64 `json:"categoryId"`
+	After      int64 `json:"after"`
+}
+
+// reindexCategoryChunk re-syncs one chunk of a category subtree's items and chains the next, so
+// a category with millions of items is handled in bounded steps. A deleted category has no
+// items left (deletion requires an empty category), so its walk ends at once.
+func (ix *Indexer) reindexCategoryChunk(ctx context.Context, cur categoryCursor) error {
+	ids, err := ix.src.LiveIDsInCategoryAfter(ctx, cur.CategoryID, cur.After, reindexChunk)
+	if err != nil {
+		return err
+	}
+	if err := ix.Sync(ctx, ids); err != nil {
+		return err
+	}
+	if len(ids) < reindexChunk {
+		return nil
+	}
+	next := categoryCursor{CategoryID: cur.CategoryID, After: ids[len(ids)-1]}
+	return ix.enqueue(ctx, outbox.TopicSearchReindexCategory, cur.CategoryID, next)
 }
 
 // EnsureSettings applies the index settings (filterable and searchable attributes) when the
@@ -118,7 +158,7 @@ func toDocument(it content.Indexable) Document {
 	}
 	return Document{
 		ID: it.ID, Type: string(it.Type), Locale: it.Locale, Slug: it.Slug, Title: it.Title, Summary: it.Summary,
-		Body: body, Tags: tags, Category: it.CategoryPath, Access: it.Access, PublishedAt: it.PublishedAt.Unix(),
+		Body: body, Tags: tags, Category: it.CategoryPath, CategoryName: it.CategoryName, Access: it.Access, PublishedAt: it.PublishedAt.Unix(),
 	}
 }
 

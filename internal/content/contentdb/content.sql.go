@@ -216,6 +216,7 @@ SELECT c.id, c.type, c.locale, c.slug, c.title, c.summary, c.access, c.visibilit
        c.published_at, c.last_published_at, c.deleted_at,
        COALESCE(r.plain_text, '')::text AS plain_text,
        COALESCE(cat.path::text, '')::text AS category_path,
+       COALESCE(cat.name, '')::text AS category_name,
        COALESCE((SELECT array_agg(t.name ORDER BY t.name) FROM content_tag ct JOIN tag t ON t.id = ct.tag_id
                  WHERE ct.content_id = c.id), '{}')::text[] AS tag_names
 FROM content c
@@ -239,6 +240,7 @@ type GetIndexableRow struct {
 	DeletedAt       *time.Time
 	PlainText       string
 	CategoryPath    string
+	CategoryName    string
 	TagNames        []string
 }
 
@@ -261,6 +263,7 @@ func (q *Queries) GetIndexable(ctx context.Context, id int64) (GetIndexableRow, 
 		&i.DeletedAt,
 		&i.PlainText,
 		&i.CategoryPath,
+		&i.CategoryName,
 		&i.TagNames,
 	)
 	return i, err
@@ -1227,6 +1230,43 @@ type ListLiveIDsAfterParams struct {
 // Keyset walk over live public items, for full reindexes and reconciliation.
 func (q *Queries) ListLiveIDsAfter(ctx context.Context, arg ListLiveIDsAfterParams) ([]int64, error) {
 	rows, err := q.db.Query(ctx, listLiveIDsAfter, arg.AfterID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLiveIDsInCategoryAfter = `-- name: ListLiveIDsInCategoryAfter :many
+SELECT c.id FROM content c
+JOIN category cat ON cat.id = c.primary_category_id
+WHERE cat.path <@ (SELECT root.path FROM category root WHERE root.id = $1)
+  AND c.status = 'PUBLISHED' AND c.visibility = 'PUBLIC' AND c.deleted_at IS NULL AND c.id > $2
+ORDER BY c.id
+LIMIT $3
+`
+
+type ListLiveIDsInCategoryAfterParams struct {
+	CategoryID int64
+	AfterID    int64
+	RowLimit   int32
+}
+
+// Keyset walk over live public items filed anywhere under one category (its subtree, by the
+// category's current path), for re-indexing after the category is renamed or moved.
+func (q *Queries) ListLiveIDsInCategoryAfter(ctx context.Context, arg ListLiveIDsInCategoryAfterParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, listLiveIDsInCategoryAfter, arg.CategoryID, arg.AfterID, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}
