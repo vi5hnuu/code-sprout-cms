@@ -120,3 +120,24 @@ func (q *Queries) MarkProcessed(ctx context.Context, arg MarkProcessedParams) er
 	_, err := q.db.Exec(ctx, markProcessed, arg.CreatedAt, arg.ID)
 	return err
 }
+
+const outboxBacklog = `-- name: OutboxBacklog :one
+SELECT count(*)::bigint AS due,
+       COALESCE(EXTRACT(EPOCH FROM now() - min(available_at)), 0)::float8 AS oldest_seconds
+FROM outbox
+WHERE processed_at IS NULL AND available_at <= now()
+`
+
+type OutboxBacklogRow struct {
+	Due           int64
+	OldestSeconds float64
+}
+
+// Events due and not yet handled, and how long the oldest has waited (for monitoring; reads
+// idx_outbox_pending).
+func (q *Queries) OutboxBacklog(ctx context.Context) (OutboxBacklogRow, error) {
+	row := q.db.QueryRow(ctx, outboxBacklog)
+	var i OutboxBacklogRow
+	err := row.Scan(&i.Due, &i.OldestSeconds)
+	return i, err
+}

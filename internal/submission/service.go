@@ -371,3 +371,10 @@ func streaks(days []time.Time, today time.Time) (current, longest int) {
 	}
 	return run, longest
 }
+
+// Pending reports submissions queued and running, and the oldest one's age in seconds, for
+// monitoring the judge pipeline.
+func (s *Service) Pending(ctx context.Context) (queued, running int64, oldestSeconds float64, err error) {
+	row, err := submissiondb.New(s.db.Replica).PendingSubmissions(ctx)
+	return row.Queued, row.Running, row.OldestSeconds, err
+}

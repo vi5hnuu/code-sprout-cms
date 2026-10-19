@@ -24,6 +24,7 @@ import (
 	"code-sprout-cms/internal/outbox"
 	"code-sprout-cms/internal/platform/config"
 	"code-sprout-cms/internal/platform/db"
+	"code-sprout-cms/internal/platform/metrics"
 	"code-sprout-cms/internal/platform/storage"
 	"code-sprout-cms/internal/problem"
 	"code-sprout-cms/internal/search"
@@ -86,7 +87,34 @@ func run() error {
 		SiteURL: dc.SiteURL, IndexNowKey: dc.IndexNowKey,
 	}, reader, content.NewSitemaps(database, assets)).Register(dispatcher)
 
+	// Monitoring: event outcomes, queue backlogs and pool use on the worker's internal port.
+	m := metrics.New()
+	m.Pool("primary", database.Primary)
+	dispatcher.OnHandled(m.Events().Observe)
+	m.Sampled(func(ctx context.Context) (map[string]float64, error) {
+		due, oldest, err := outbox.Backlog(ctx, database.Primary)
+		if err != nil {
+			return nil, err
+		}
+		queued, running, oldestSub, err := submissions.Pending(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]float64{
+			"outbox_due_events": float64(due), "outbox_oldest_due_seconds": oldest,
+			"judge_queued_submissions": float64(queued), "judge_running_submissions": float64(running),
+			"judge_oldest_pending_seconds": oldestSub,
+		}, nil
+	}, map[string]string{
+		"outbox_due_events":            "Outbox events due and not yet handled.",
+		"outbox_oldest_due_seconds":    "How long the oldest due outbox event has waited.",
+		"judge_queued_submissions":     "Submissions waiting for the judge.",
+		"judge_running_submissions":    "Submissions being judged.",
+		"judge_oldest_pending_seconds": "Age of the oldest queued or running submission.",
+	})
+
 	var wg sync.WaitGroup
+	wg.Go(func() { m.Serve(ctx, cfg.WorkerMetricsAddr) })
 	wg.Go(func() { dispatcher.Run(ctx) })
 	if cfg.Search.URL != "" {
 		wg.Go(func() { indexer.EnsureSettings(ctx) })

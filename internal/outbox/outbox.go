@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"code-sprout-cms/internal/outbox/outboxdb"
 )
@@ -61,4 +62,11 @@ func Publish(ctx context.Context, db outboxdb.DBTX, topic string, aggregateID in
 		return fmt.Errorf("outbox %s: marshal: %w", topic, err)
 	}
 	return outboxdb.New(db).InsertEvent(ctx, outboxdb.InsertEventParams{Topic: topic, AggregateID: aggregateID, Payload: body})
+}
+
+// Backlog reports events that are due but not yet handled, and the oldest one's wait in
+// seconds: a growing backlog means the workers are behind or a downstream is failing.
+func Backlog(ctx context.Context, pool *pgxpool.Pool) (due int64, oldestSeconds float64, err error) {
+	row, err := outboxdb.New(pool).OutboxBacklog(ctx)
+	return row.Due, row.OldestSeconds, err
 }

@@ -16,9 +16,12 @@ import (
 )
 
 type Config struct {
-	HTTPAddr        string
-	LogLevel        slog.Level
-	ShutdownTimeout time.Duration
+	HTTPAddr string
+	// Internal addresses for /metrics (Prometheus); empty disables. Never the public port.
+	APIMetricsAddr    string
+	WorkerMetricsAddr string
+	LogLevel          slog.Level
+	ShutdownTimeout   time.Duration
 	// Header carrying the real client IP when running behind a CDN/proxy (e.g.
 	// CF-Connecting-IP). Empty means use the socket peer, which is right with no proxy.
 	TrustedClientIPHeader string
@@ -97,8 +100,10 @@ func Load() (Config, error) {
 	}
 
 	cfg := Config{
-		HTTPAddr:        envOr("HTTP_ADDR", ":9300"),
-		ShutdownTimeout: durationOr("SHUTDOWN_TIMEOUT", 20*time.Second, &errs),
+		HTTPAddr:          envOr("HTTP_ADDR", ":9300"),
+		APIMetricsAddr:    envOr("API_METRICS_ADDR", "127.0.0.1:9311"),
+		WorkerMetricsAddr: envOr("WORKER_METRICS_ADDR", "127.0.0.1:9312"),
+		ShutdownTimeout:   durationOr("SHUTDOWN_TIMEOUT", 20*time.Second, &errs),
 
 		TrustedClientIPHeader: os.Getenv("TRUSTED_CLIENT_IP_HEADER"),
 		InternalProxySecret:   os.Getenv("INTERNAL_PROXY_SECRET"),

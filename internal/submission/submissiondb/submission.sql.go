@@ -572,6 +572,28 @@ func (q *Queries) ListUserSubmissions(ctx context.Context, arg ListUserSubmissio
 	return items, nil
 }
 
+const pendingSubmissions = `-- name: PendingSubmissions :one
+SELECT count(*) FILTER (WHERE status = 'QUEUED')::bigint AS queued,
+       count(*) FILTER (WHERE status = 'RUNNING')::bigint AS running,
+       COALESCE(EXTRACT(EPOCH FROM now() - min(created_at)), 0)::float8 AS oldest_seconds
+FROM submission
+WHERE status IN ('QUEUED', 'RUNNING')
+`
+
+type PendingSubmissionsRow struct {
+	Queued        int64
+	Running       int64
+	OldestSeconds float64
+}
+
+// Submissions waiting for or being judged, for monitoring (reads idx_submission_pending).
+func (q *Queries) PendingSubmissions(ctx context.Context) (PendingSubmissionsRow, error) {
+	row := q.db.QueryRow(ctx, pendingSubmissions)
+	var i PendingSubmissionsRow
+	err := row.Scan(&i.Queued, &i.Running, &i.OldestSeconds)
+	return i, err
+}
+
 const problemStates = `-- name: ProblemStates :many
 SELECT problem_id, first_solved_at FROM user_problem
 WHERE user_id = $1 AND problem_id = ANY ($2::bigint[])

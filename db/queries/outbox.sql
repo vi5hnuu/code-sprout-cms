@@ -25,3 +25,11 @@ WHERE created_at = $1 AND id = $2;
 UPDATE outbox
 SET attempts = attempts + 1, last_error = $3, available_at = $4
 WHERE created_at = $1 AND id = $2;
+
+-- Events due and not yet handled, and how long the oldest has waited (for monitoring; reads
+-- idx_outbox_pending).
+-- name: OutboxBacklog :one
+SELECT count(*)::bigint AS due,
+       COALESCE(EXTRACT(EPOCH FROM now() - min(available_at)), 0)::float8 AS oldest_seconds
+FROM outbox
+WHERE processed_at IS NULL AND available_at <= now();

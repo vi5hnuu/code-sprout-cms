@@ -28,6 +28,13 @@ type Dispatcher struct {
 	handlers map[string][]Handler
 	batch    int32
 	idle     time.Duration // poll interval when the queue is empty
+	// onHandled observes every event's outcome (metrics); nil when nothing listens.
+	onHandled func(topic string, err error, took time.Duration)
+}
+
+// OnHandled sets an observer called after each event with its outcome and handling time.
+func (d *Dispatcher) OnHandled(fn func(topic string, err error, took time.Duration)) {
+	d.onHandled = fn
 }
 
 func NewDispatcher(d *db.DB) *Dispatcher {
@@ -70,7 +77,12 @@ func (d *Dispatcher) dispatchBatch(ctx context.Context) (int, error) {
 	}
 	for _, row := range rows {
 		e := Event{ID: row.ID, Topic: row.Topic, AggregateID: row.AggregateID, Payload: row.Payload, Attempts: row.Attempts}
-		if herr := d.handle(ctx, e); herr != nil {
+		start := time.Now()
+		herr := d.handle(ctx, e)
+		if d.onHandled != nil {
+			d.onHandled(e.Topic, herr, time.Since(start))
+		}
+		if herr != nil {
 			slog.Warn("outbox event failed", "id", e.ID, "topic", e.Topic, "attempt", e.Attempts+1, "err", herr)
 			msg := truncate(herr.Error(), 2000)
 			if err := q.MarkFailed(ctx, outboxdb.MarkFailedParams{

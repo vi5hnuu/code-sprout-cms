@@ -28,6 +28,7 @@ import (
 	"code-sprout-cms/internal/platform/config"
 	"code-sprout-cms/internal/platform/db"
 	"code-sprout-cms/internal/platform/httpx"
+	"code-sprout-cms/internal/platform/metrics"
 	"code-sprout-cms/internal/platform/ratelimit"
 	"code-sprout-cms/internal/platform/storage"
 	"code-sprout-cms/internal/problem"
@@ -124,7 +125,15 @@ func run() error {
 
 	// Order matters: the request id exists before anything logs, and AccessLog wraps Recover
 	// so a panic is still recorded as a 500 with its request id.
+	m := metrics.New()
+	m.Pool("primary", database.Primary)
+	if database.Replica != database.Primary {
+		m.Pool("replica", database.Replica)
+	}
+	go m.Serve(ctx, cfg.APIMetricsAddr)
+
 	apiHandler := httpx.Chain(api,
+		m.HTTP(api),
 		httpx.WithRequestID,
 		httpx.AccessLog,
 		httpx.Recover,

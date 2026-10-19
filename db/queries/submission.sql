@@ -141,3 +141,11 @@ LIMIT sqlc.arg(lim);
 
 -- name: CountDueReviews :one
 SELECT count(*) FROM user_review WHERE user_id = $1 AND state = 'ACTIVE' AND due_at <= now();
+
+-- Submissions waiting for or being judged, for monitoring (reads idx_submission_pending).
+-- name: PendingSubmissions :one
+SELECT count(*) FILTER (WHERE status = 'QUEUED')::bigint AS queued,
+       count(*) FILTER (WHERE status = 'RUNNING')::bigint AS running,
+       COALESCE(EXTRACT(EPOCH FROM now() - min(created_at)), 0)::float8 AS oldest_seconds
+FROM submission
+WHERE status IN ('QUEUED', 'RUNNING');
