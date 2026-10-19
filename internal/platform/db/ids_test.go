@@ -24,7 +24,8 @@ func TestIdentitySequencesStayInShardRange(t *testing.T) {
 		FROM pg_depend dep
 		JOIN pg_class c ON c.oid = dep.objid AND c.relkind = 'S'
 		JOIN pg_sequences s ON format('%I.%I', s.schemaname, s.sequencename)::regclass = dep.objid::regclass
-		WHERE dep.deptype = 'i' AND dep.classid = 'pg_class'::regclass`)
+		WHERE dep.deptype = 'i' AND dep.classid = 'pg_class'::regclass
+		  AND dep.refobjid <> 'goose_db_version'::regclass`)
 	if err != nil {
 		t.Fatal(err)
 	}

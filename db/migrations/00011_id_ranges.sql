@@ -43,12 +43,14 @@ BEGIN
     INSERT INTO id_shard (shard) VALUES (shard)
     ON CONFLICT (singleton) DO UPDATE SET shard = EXCLUDED.shard;
     -- Every sequence that backs an identity column ('i' dependency), parents of partitioned
-    -- tables included.
+    -- tables included. The migration tool's own bookkeeping table is not data and is skipped;
+    -- any application identity that is not bigint fails here loudly, as it should.
     FOR seq IN
         SELECT d.objid::regclass AS name
         FROM pg_depend d
         JOIN pg_class c ON c.oid = d.objid AND c.relkind = 'S'
         WHERE d.deptype = 'i' AND d.classid = 'pg_class'::regclass
+          AND d.refobjid <> 'goose_db_version'::regclass
     LOOP
         SELECT last_value INTO cur FROM pg_sequences
         WHERE format('%I.%I', schemaname, sequencename)::regclass = seq.name;
