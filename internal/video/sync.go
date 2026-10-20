@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -395,20 +396,27 @@ func (r *run) upsert(ctx context.Context, tx pgx.Tx, d Upload) error {
 		return nil
 	}
 
-	if err := q.UpdateExtMedia(ctx, videodb.UpdateExtMediaParams{
-		ContentID: ext.ContentID, DurationS: int32(d.Duration), PublishedAt: d.PublishedAt, ThumbnailUrl: media.url,
-		ThumbnailW: media.w, ThumbnailH: media.h, IsShort: ext.IsShort || d.Duration <= shortSeconds, Chapters: chapters,
-	}); err != nil {
-		return err
+	isShort := ext.IsShort || d.Duration <= shortSeconds
+	mediaChanged := ext.DurationS != int32(d.Duration) || !ext.PublishedAt.Equal(d.PublishedAt) || ext.IsShort != isShort ||
+		ext.ThumbnailUrl != media.url || !equalPtr(ext.ThumbnailW, media.w) || !equalPtr(ext.ThumbnailH, media.h) ||
+		!sameChapters(ext.Chapters, d.Description)
+	if mediaChanged {
+		if err := q.UpdateExtMedia(ctx, videodb.UpdateExtMediaParams{
+			ContentID: ext.ContentID, DurationS: int32(d.Duration), PublishedAt: d.PublishedAt, ThumbnailUrl: media.url,
+			ThumbnailW: media.w, ThumbnailH: media.h, IsShort: isShort, Chapters: chapters,
+		}); err != nil {
+			return err
+		}
 	}
-	live, isLive, err := content.LiveRevision(ctx, tx, ext.ContentID)
+	st, err := content.Revisions(ctx, tx, ext.ContentID)
 	if err != nil {
 		return err
 	}
 	// The sync may rewrite the text only while no editor has: the live revision is still the
-	// one it published. An item it took down comes back when the video does.
-	untouched := isLive && ext.SyncedRevNo != nil && live == *ext.SyncedRevNo
-	back := !isLive && ext.RemovedAt != nil
+	// one it published and there is no newer draft in the studio. An item it took down comes
+	// back when the video does.
+	untouched := st.IsLive && ext.SyncedRevNo != nil && st.Live == *ext.SyncedRevNo && st.Draft == st.Live
+	back := !st.IsLive && ext.RemovedAt != nil
 	if (untouched && string(ext.SourceHash) != string(hash)) || back {
 		_, rev, err := r.s.contents.PublishSynced(ctx, tx, owner, ext.ContentID, item)
 		if err != nil {
@@ -420,8 +428,34 @@ func (r *run) upsert(ctx context.Context, tx pgx.Tx, d Upload) error {
 		r.observe("updated")
 		return nil
 	}
+	// Media (thumbnail, duration, chapters) is shown on the cached watch page and in listings,
+	// so a change to it alone still refreshes them.
+	if mediaChanged && st.IsLive {
+		if err := content.Touched(ctx, tx, ext.ContentID); err != nil {
+			return err
+		}
+		r.observe("updated")
+		return nil
+	}
 	r.observe("unchanged")
 	return nil
+}
+
+// sameChapters reports whether stored chapters (jsonb, so not byte-comparable with fresh JSON)
+// match the ones the description now yields.
+func sameChapters(stored []byte, description string) bool {
+	var old []Chapter
+	if err := json.Unmarshal(stored, &old); err != nil {
+		return false
+	}
+	return slices.Equal(old, ParseChapters(description))
+}
+
+func equalPtr[T comparable](a, b *T) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
 }
 
 // shortSeconds: anything this short is a Short whatever its playlist (YouTube's original limit).
@@ -442,7 +476,7 @@ func (r *run) removeExternal(ctx context.Context, externalID string) error {
 }
 
 func (r *run) remove(ctx context.Context, tx pgx.Tx, contentID int64) error {
-	if _, live, err := content.LiveRevision(ctx, tx, contentID); err != nil || !live {
+	if st, err := content.Revisions(ctx, tx, contentID); err != nil || !st.IsLive {
 		return err
 	}
 	if err := r.s.contents.ArchiveSynced(ctx, tx, r.src.OwnerUserID, contentID); err != nil {

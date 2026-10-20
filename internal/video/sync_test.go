@@ -278,7 +278,8 @@ func TestSyncMirrorsAChannel(t *testing.T) {
 	if got := titleOf(t, e, idOf[solution]); !strings.HasSuffix(got, "(2026)") {
 		t.Fatalf("title not refreshed: %q", got)
 	}
-	// …and left alone once an editor has.
+	// …and left alone once an editor has: first while the edit is an unpublished draft (the
+	// sync must not publish over it), then once it is live.
 	admin := testenv.Admin(t, e.DB)
 	d, err := e.Contents.Get(ctx, admin, idOf[solution])
 	if err != nil {
@@ -286,11 +287,34 @@ func TestSyncMirrorsAChannel(t *testing.T) {
 	}
 	in := content.DraftInput{Meta: d.Meta, Body: "Notes by the editor."}
 	in.Title = "Editor's title"
-	if _, err := e.Contents.SaveDraft(ctx, admin, d.ID, d.DraftRevNo, in); err != nil {
+	saved, err := e.Contents.SaveDraft(ctx, admin, d.ID, d.DraftRevNo, in)
+	if err != nil {
 		t.Fatal(err)
+	}
+	yt.edit(func(f *fakeYouTube) { v := f.videos[solution]; v.title = "Retitled on YouTube"; f.videos[solution] = v })
+	forceReconcile(t, e, channel)
+	if err := newSyncer(1000).SyncAll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := e.Contents.Get(ctx, admin, d.ID); got.DraftRevNo != saved.DraftRevNo || got.Meta.Title != "Editor's title" {
+		t.Fatalf("the sync replaced an editor's unpublished draft: rev %d title %q", got.DraftRevNo, got.Meta.Title)
 	}
 	if _, err := e.Contents.Publish(ctx, admin, d.ID); err != nil {
 		t.Fatal(err)
+	}
+	// A media change alone (the video was re-cut) still refreshes the cached pages.
+	updates := func() (n int) {
+		_ = e.DB.Primary.QueryRow(ctx, `SELECT count(*) FROM outbox WHERE topic = 'content.updated' AND aggregate_id = $1`, d.ID).Scan(&n)
+		return n
+	}
+	before = updates()
+	yt.edit(func(f *fakeYouTube) { v := f.videos[solution]; v.duration = "PT9M59S"; f.videos[solution] = v })
+	forceReconcile(t, e, channel)
+	if err := newSyncer(1000).SyncAll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if updates() != before+1 {
+		t.Errorf("a duration change did not refresh the page")
 	}
 	yt.edit(func(f *fakeYouTube) { v := f.videos[solution]; v.desc = "New description"; f.videos[solution] = v })
 	forceReconcile(t, e, channel)

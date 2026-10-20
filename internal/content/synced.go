@@ -178,14 +178,22 @@ func WithLinkOfKind(ctx context.Context, tx pgx.Tx, ids []int64, kind string) (m
 	return out, err
 }
 
-// LiveRevision returns the revision readers see (ok false when the item is not live).
-func LiveRevision(ctx context.Context, tx pgx.Tx, id int64) (int32, bool, error) {
+// RevisionState is which revisions of an item readers and editors see.
+type RevisionState struct {
+	Live   int32 // the published revision; meaningful only when IsLive
+	IsLive bool
+	Draft  int32 // the newest revision in the editor
+}
+
+// Revisions returns the live and draft revision of an item.
+func Revisions(ctx context.Context, tx pgx.Tx, id int64) (RevisionState, error) {
 	c, err := contentdb.New(tx).GetContent(ctx, id)
 	if err != nil {
-		return 0, false, err
+		return RevisionState{}, err
 	}
-	if Status(c.Status) != StatusPublished || c.PublishedRevNo == nil {
-		return 0, false, nil
+	st := RevisionState{Draft: c.DraftRevNo}
+	if Status(c.Status) == StatusPublished && c.PublishedRevNo != nil {
+		st.Live, st.IsLive = *c.PublishedRevNo, true
 	}
-	return *c.PublishedRevNo, true, nil
+	return st, nil
 }
