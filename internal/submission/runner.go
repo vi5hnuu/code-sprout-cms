@@ -37,6 +37,11 @@ func (s *Service) RunNext(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	// A runner that died mid-judging (crash, OOM) leaves the lease to expire and the
+	// submission is leased again; past maxAttempts it is failed instead of looping forever.
+	if sub.Attempts > maxAttempts {
+		return true, s.fail(ctx, sub, "We could not judge this submission. Please submit again.")
+	}
 	if err := s.judgeSubmission(ctx, sub); err != nil {
 		return true, s.handleRunError(ctx, sub, err)
 	}
@@ -95,8 +100,9 @@ func (s *Service) judgeSubmission(ctx context.Context, sub submissiondb.Submissi
 		return err
 	}
 	jobs := sub.JudgeJobs
-	// Jobs recorded under a different plan cannot be mapped to cases: judge afresh.
-	if len(jobs) != len(spans) {
+	// Jobs recorded under a different plan, or against a test set that has since been replaced,
+	// cannot be mapped to these cases: judge afresh.
+	if len(jobs) != len(spans) || sub.TestSetID == nil || *sub.TestSetID != spec.TestSet.ID {
 		jobs = nil
 	}
 	if len(jobs) == 0 {
@@ -293,8 +299,13 @@ func (s *Service) fail(ctx context.Context, sub submissiondb.Submission, reason 
 
 // handleRunError retries transient judge trouble later and gives up after maxAttempts.
 func (s *Service) handleRunError(ctx context.Context, sub submissiondb.Submission, err error) error {
-	transient := errors.Is(err, judge.ErrUnavailable) || errors.Is(err, judge.ErrBusy)
-	if transient && sub.Attempts < maxAttempts {
+	// Shutting down: leave the lease to expire so another runner picks the submission up.
+	if ctx.Err() != nil {
+		return err
+	}
+	// Only a refusal by the judge is final. Anything else (judge down or busy, a database or
+	// storage hiccup) is retried until the attempts run out.
+	if !errors.Is(err, judge.ErrRejected) && sub.Attempts < maxAttempts {
 		slog.Warn("submission requeued", "submission", sub.ID, "attempt", sub.Attempts, "err", err)
 		return submissiondb.New(s.db.Primary).RequeueSubmission(ctx, submissiondb.RequeueSubmissionParams{
 			UserID: sub.UserID, ID: sub.ID, RetryAt: ptrTime(time.Now().Add(retryAfter)),
