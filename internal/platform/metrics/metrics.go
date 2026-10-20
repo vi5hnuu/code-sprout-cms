@@ -36,13 +36,16 @@ func (m *Metrics) Handler() http.Handler {
 	return promhttp.HandlerFor(m.reg, promhttp.HandlerOpts{Registry: m.reg, Timeout: 10 * time.Second})
 }
 
-// Serve exposes /metrics on addr until ctx ends; an empty addr disables it.
+// Serve exposes /metrics on addr until ctx ends; an empty addr disables it. It also answers
+// GET /healthz (process up), so a process with no other HTTP server (the worker) can be
+// health-checked by its container runtime.
 func (m *Metrics) Serve(ctx context.Context, addr string) {
 	if addr == "" {
 		return
 	}
 	mux := http.NewServeMux()
 	mux.Handle("GET /metrics", m.Handler())
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		<-ctx.Done()
