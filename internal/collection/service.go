@@ -437,7 +437,14 @@ func (s *Service) View(ctx context.Context, p *auth.Principal, id int64, req pag
 }
 
 func (s *Service) view(ctx context.Context, c collectiondb.Collection, req page.Request[float64]) (View, error) {
-	rows, err := collectiondb.New(s.db.Replica).ListItems(ctx, collectiondb.ListItemsParams{
+	q := collectiondb.New(s.db.Replica)
+	// The total is shown on every page ("40 videos", "120 steps"). Collections are capped
+	// (maxListItems), so this is a bounded index-only count.
+	count, err := q.CountItems(ctx, c.ID)
+	if err != nil {
+		return View{}, err
+	}
+	rows, err := q.ListItems(ctx, collectiondb.ListItemsParams{
 		CollectionID: c.ID, AfterPosition: req.Key, RowLimit: int32(req.Limit + 1),
 	})
 	if err != nil {
@@ -452,7 +459,9 @@ func (s *Service) view(ctx context.Context, c collectiondb.Collection, req page.
 	if err != nil {
 		return View{}, err
 	}
-	return View{Collection: fromRow(c), Items: items, NextCursor: built.NextCursor}, nil
+	out := View{Collection: fromRow(c), Items: items, NextCursor: built.NextCursor}
+	out.ItemCount = &count
+	return out, nil
 }
 
 // Mirrored is an editorial collection kept in step with an outside list (a YouTube playlist

@@ -48,6 +48,10 @@ func TestReaderListsAndEditorialCollections(t *testing.T) {
 	if err != nil || len(v.Items) != 2 || v.Items[0].ID != a {
 		t.Fatalf("view = %+v, %v", v.Items, err)
 	}
+	// The total counts every item, not just the page shown.
+	if v, err := svc.View(ctx, &reader, l.ID, page.Request[float64]{Limit: 1}); err != nil || len(v.Items) != 1 || v.ItemCount == nil || *v.ItemCount != 2 {
+		t.Fatalf("one-item page = %d items, count %v, %v", len(v.Items), v.ItemCount, err)
+	}
 	if err := svc.Reorder(ctx, reader, l.ID, []int64{b, a}); err != nil {
 		t.Fatal(err)
 	}
