@@ -247,7 +247,6 @@ type ListFilter struct {
 	Author   string // handle
 }
 
-// List returns live, PUBLIC items newest first.
 // ResolveTag finds a tag from its kind:slug form (e.g. topic:arrays), as list filters name it.
 func (r *Reader) ResolveTag(ctx context.Context, kindSlug string) (taxonomy.Tag, error) {
 	kind, slug, ok := strings.Cut(kindSlug, ":")
@@ -257,6 +256,7 @@ func (r *Reader) ResolveTag(ctx context.Context, kindSlug string) (taxonomy.Tag,
 	return r.taxonomy.TagBySlug(ctx, taxonomy.TagKind(strings.ToUpper(kind)), slug)
 }
 
+// List returns live, PUBLIC items newest first.
 func (r *Reader) List(ctx context.Context, f ListFilter, req page.Request[PublishedCursor]) (page.Page[ListItem], error) {
 	set := 0
 	for _, v := range []string{f.Category, f.Tag, f.Author} {
@@ -407,7 +407,6 @@ func (r *Reader) listVideoMedia(ctx context.Context, rows []contentdb.Content) (
 	return r.videoMedia(ctx, ids)
 }
 
-// Backlinks returns live items linking to id with kind (e.g. the problems a video solves).
 // TagBounds is the smallest and largest live item id carrying a tag; 0, 0 when it has none.
 func (r *Reader) TagBounds(ctx context.Context, tagID int64) (lo, hi int64, err error) {
 	b, err := contentdb.New(r.db.Replica).TagIDBounds(ctx, tagID)
@@ -419,6 +418,7 @@ func (r *Reader) TaggedFrom(ctx context.Context, tagID int64, t Type, pivot int6
 	return contentdb.New(r.db.Replica).TaggedOfTypeFrom(ctx, contentdb.TaggedOfTypeFromParams{TagID: tagID, Pivot: pivot, Type: string(t), RowLimit: limit})
 }
 
+// Backlinks returns live items linking to id with kind (e.g. the problems a video solves).
 func (r *Reader) Backlinks(ctx context.Context, id int64, kind string, limit int32) ([]Link, error) {
 	rows, err := contentdb.New(r.db.Replica).ListLiveBacklinks(ctx, contentdb.ListLiveBacklinksParams{ToID: id, Kind: kind, RowLimit: limit})
 	if err != nil {

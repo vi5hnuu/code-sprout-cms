@@ -371,11 +371,11 @@ func TestScheduledPublishing(t *testing.T) {
 		}
 		return d
 	}
-	good, broken := approve(testenv.Unique("sched")), approve(testenv.Unique("sched"))
+	good, broken, clash := approve(testenv.Unique("sched")), approve(testenv.Unique("sched")), approve(testenv.Unique("sched"))
 
 	_, err := f.svc.Schedule(ctx, f.editor, good.ID, ScheduleInput{At: time.Now().Add(-time.Hour)})
 	wantErr(t, err, apperr.KindInvalid, "validation_failed")
-	for _, d := range []Draft{good, broken} {
+	for _, d := range []Draft{clash, good, broken} {
 		s, err := f.svc.Schedule(ctx, f.editor, d.ID, ScheduleInput{At: time.Now().Add(10 * time.Minute)})
 		if err != nil || s.ReviewState != ReviewScheduled || s.ScheduledAt == nil {
 			t.Fatalf("schedule = %+v, %v", s, err)
@@ -384,6 +384,15 @@ func TestScheduledPublishing(t *testing.T) {
 
 	// Time passes; meanwhile the broken item's image fails verification.
 	if _, err := f.d.Primary.Exec(ctx, "UPDATE content SET scheduled_at = now() - interval '1 second' WHERE id = ANY($1)", []int64{good.ID, broken.ID}); err != nil {
+		t.Fatal(err)
+	}
+	// The clash comes due first and fails in the database itself (its slug is now taken), which
+	// must not roll back or block the items after it.
+	if _, err := f.d.Primary.Exec(ctx, "UPDATE content SET scheduled_at = now() - interval '1 minute' WHERE id = $1", clash.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.d.Primary.Exec(ctx, "UPDATE content_revision SET meta = jsonb_set(meta, '{slug}', to_jsonb($1::text)) WHERE content_id=$2 AND rev_no=$3",
+		good.Meta.Slug, clash.ID, clash.DraftRevNo); err != nil {
 		t.Fatal(err)
 	}
 	brokenImg := f.readyAsset()
@@ -407,8 +416,10 @@ func TestScheduledPublishing(t *testing.T) {
 	if g, _ := f.svc.Get(ctx, f.editor, good.ID); g.Status != StatusPublished || g.ScheduledAt != nil {
 		t.Fatalf("scheduled item not published: %+v", g)
 	}
-	if b, _ := f.svc.Get(ctx, f.editor, broken.ID); b.Status != StatusDraft || b.ReviewState != ReviewApproved {
-		t.Fatalf("broken item should fall back to APPROVED: %s/%s", b.Status, b.ReviewState)
+	for _, d := range []Draft{broken, clash} {
+		if b, _ := f.svc.Get(ctx, f.editor, d.ID); b.Status != StatusDraft || b.ReviewState != ReviewApproved {
+			t.Fatalf("failed item %d should fall back to APPROVED: %s/%s", d.ID, b.Status, b.ReviewState)
+		}
 	}
 	if f.count("SELECT count(*) FROM audit_log WHERE entity_id=$1 AND action='content.schedule_failed' AND actor_id IS NULL", broken.ID) != 1 {
 		t.Fatal("failed scheduled publish was not audited as a system action")

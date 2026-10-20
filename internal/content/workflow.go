@@ -163,6 +163,12 @@ func (s *Service) Archive(ctx context.Context, p auth.Principal, id int64) (Draf
 		if err := q.SetContentStatus(ctx, contentdb.SetContentStatusParams{ID: c.ID, Status: string(StatusArchived)}); err != nil {
 			return err
 		}
+		// A pending schedule would put the archived page straight back online: cancel it.
+		if ReviewState(c.ReviewState) == ReviewScheduled {
+			if err := s.setReview(ctx, tx, q, p.UserID, c, ReviewApproved, nil, "content.unschedule"); err != nil {
+				return err
+			}
+		}
 		if err := q.SetContentTagsPublishedAt(ctx, contentdb.SetContentTagsPublishedAtParams{ContentID: c.ID}); err != nil {
 			return err
 		}
@@ -204,9 +210,10 @@ func (s *Service) Delete(ctx context.Context, p auth.Principal, id int64) error 
 	})
 }
 
-// PublishDue publishes scheduled items whose time has come. A draft that stopped being
-// publishable since it was scheduled (say, an image was quarantined) drops back to APPROVED
-// and is logged, rather than blocking the rest of the batch.
+// PublishDue publishes scheduled items whose time has come. Each item is published inside its
+// own savepoint: one that fails (it stopped being publishable since it was scheduled, say an
+// image was quarantined, or its slug now collides) is rolled back alone, drops back to
+// APPROVED and is logged, so it never blocks the rest of the batch or the next run.
 func (s *Service) PublishDue(ctx context.Context, batch int32) (int, error) {
 	published := 0
 	err := s.db.InTx(ctx, func(tx pgx.Tx) error {
@@ -216,29 +223,52 @@ func (s *Service) PublishDue(ctx context.Context, batch int32) (int, error) {
 			return err
 		}
 		for _, id := range ids {
+			perr := s.publishDueOne(ctx, tx, id)
+			if perr == nil {
+				published++
+				continue
+			}
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if e, ok := apperr.As(perr); ok && e.Kind != apperr.KindInternal {
+				slog.Warn("scheduled publish failed", "content", id, "code", e.Code)
+			} else {
+				slog.Error("scheduled publish failed", "content", id, "err", perr)
+			}
 			c, err := q.GetContentForUpdate(ctx, id)
 			if err != nil {
 				return err
 			}
-			meta, body, err := draftOf(ctx, q, c)
-			if err != nil {
+			if err := s.setReview(ctx, tx, q, 0, c, ReviewApproved, nil, "content.schedule_failed"); err != nil {
 				return err
 			}
-			if err := s.publishLocked(ctx, tx, q, 0, c, meta, body); err != nil {
-				if e, ok := apperr.As(err); ok && e.Kind != apperr.KindInternal {
-					slog.Warn("scheduled publish failed", "content", id, "code", e.Code)
-					if err := s.setReview(ctx, tx, q, 0, c, ReviewApproved, nil, "content.schedule_failed"); err != nil {
-						return err
-					}
-					continue
-				}
-				return err
-			}
-			published++
 		}
 		return nil
 	})
 	return published, err
+}
+
+// publishDueOne publishes one claimed item in a savepoint of tx, rolled back if it fails.
+func (s *Service) publishDueOne(ctx context.Context, tx pgx.Tx, id int64) error {
+	sp, err := tx.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = sp.Rollback(ctx) }() // no-op once committed
+	q := contentdb.New(sp)
+	c, err := q.GetContentForUpdate(ctx, id)
+	if err != nil {
+		return err
+	}
+	meta, body, err := draftOf(ctx, q, c)
+	if err != nil {
+		return err
+	}
+	if err := s.publishLocked(ctx, sp, q, 0, c, meta, body); err != nil {
+		return err
+	}
+	return sp.Commit(ctx)
 }
 
 // RunScheduler publishes due items every interval until ctx ends.
