@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -138,10 +139,15 @@ func (s *Service) applyBatch(ctx context.Context, key string) error {
 		ids = append(ids, id)
 	}
 	// Hits on ids that are not live (typos, deleted pages, crafted requests) are dropped here
-	// rather than checked per request, keeping the hot path a single Redis round trip.
-	live, err := s.content.LiveIDs(ctx, ids)
-	if err != nil {
-		return err
+	// rather than checked per request, keeping the hot path a single Redis round trip. A busy
+	// interval can hold many ids, so they are checked in bounded chunks.
+	live := make([]int64, 0, len(ids))
+	for chunk := range slices.Chunk(ids, reconcileBatch) {
+		got, err := s.content.LiveIDs(ctx, chunk)
+		if err != nil {
+			return err
+		}
+		live = append(live, got...)
 	}
 	err = s.db.InTx(ctx, func(tx pgx.Tx) error {
 		q := engagementdb.New(tx)

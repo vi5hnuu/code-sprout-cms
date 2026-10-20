@@ -274,6 +274,18 @@ func TestCommentLifecycle(t *testing.T) {
 	if n := countRows(t, e.d, "SELECT count(*) FROM comment_report WHERE comment_id=$1 AND resolved_at IS NULL", reply.ID); n != 0 {
 		t.Fatalf("%d reports still open after moderation", n)
 	}
+	// An author's deletion is final: neither a restore nor dismissed reports bring it back.
+	for _, action := range []ModerationAction{ModerateRestore, ModerateDismiss, ModerateHide} {
+		if err := e.svc.Moderate(ctx, mod, id, root.ID, action); err != nil {
+			t.Fatal(err)
+		}
+		if n := countRows(t, e.d, "SELECT count(*) FROM comment WHERE id=$1 AND status='DELETED'", root.ID); n != 1 {
+			t.Fatalf("%s changed a deleted comment", action)
+		}
+	}
+	if s := e.stats(id); s.Comments != 2 {
+		t.Fatalf("comments = %d after moderating a deleted comment, want 2", s.Comments)
+	}
 
 	delete(e.live, id)
 	_, err = e.svc.CreateComment(ctx, alice, id, nil, "late")

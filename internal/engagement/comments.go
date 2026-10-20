@@ -247,8 +247,13 @@ func (s *Service) Moderate(ctx context.Context, p auth.Principal, contentID, id 
 		if err != nil {
 			return err
 		}
-		if err := s.setStatus(ctx, tx, q, p, c, status, "comment.moderate."+strings.ToLower(string(action))); err != nil {
-			return err
+		// A deleted comment stays deleted (an author's deletion is final): only a hidden one
+		// (by a moderator or by reports) can be made visible again.
+		from := CommentStatus(c.Status)
+		if from != CommentDeleted && (status != CommentVisible || from == CommentHidden) {
+			if err := s.setStatus(ctx, tx, q, p, c, status, "comment.moderate."+strings.ToLower(string(action))); err != nil {
+				return err
+			}
 		}
 		return q.ResolveReports(ctx, engagementdb.ResolveReportsParams{CommentID: id, Resolver: &p.UserID})
 	})

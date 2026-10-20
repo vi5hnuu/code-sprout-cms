@@ -24,6 +24,7 @@ type Entries interface {
 
 type Items interface {
 	ItemsByID(ctx context.Context, ids []int64) ([]content.ListItem, error)
+	LiveIDs(ctx context.Context, ids []int64) ([]int64, error)
 }
 
 type Handler struct {
