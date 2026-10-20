@@ -1,0 +1,16 @@
+# Only what the image build needs reaches the daemon: no secrets, local tools or docs.
+.git
+.env
+.env.*
+bin/
+tmp/
+deploy/
+docs/
+spec/
+*.md
+*.test
+*.out
+coverage.*
+.idea/
+.vscode/
+.DS_Store
