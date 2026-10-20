@@ -1,0 +1,8 @@
+# Code Sprout web — imported inside the site block for SITE_DOMAIN in /etc/caddy/Caddyfile.
+encode zstd gzip
+# 4410 = WEB_PORT in .env
+reverse_proxy 127.0.0.1:4410 {
+    # The reader's address, for rate limits and view counts (CLIENT_IP_HEADER=x-real-ip).
+    # {client_ip} honours the global trusted_proxies setting if a CDN sits in front.
+    header_up X-Real-IP {client_ip}
+}
