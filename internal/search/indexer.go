@@ -25,6 +25,7 @@ type Source interface {
 	Indexable(ctx context.Context, id int64) (content.Indexable, bool, error)
 	LiveIDsAfter(ctx context.Context, after int64, limit int32) ([]int64, error)
 	LiveIDsInCategoryAfter(ctx context.Context, categoryID, after int64, limit int32) ([]int64, error)
+	LiveIDsWithTagAfter(ctx context.Context, tagID, after int64, limit int32) ([]int64, error)
 }
 
 type Difficulties interface {
@@ -57,38 +58,65 @@ func (ix *Indexer) Register(d Subscriber) {
 	d.On(outbox.TopicSearchReindex, ix.reindexChunk)
 	// A renamed or moved category changes the path and name every item under it carries.
 	d.On(outbox.TopicCategoryChanged, func(ctx context.Context, e outbox.Event) error {
-		return ix.reindexCategoryChunk(ctx, categoryCursor{CategoryID: e.AggregateID})
+		return ix.reindexCategoryChunk(ctx, scopeCursor{CategoryID: e.AggregateID})
 	})
-	d.On(outbox.TopicSearchReindexCategory, func(ctx context.Context, e outbox.Event) error {
-		var cur categoryCursor
+	d.On(outbox.TopicSearchReindexCategory, ix.onScopeChunk(ix.reindexCategoryChunk))
+	// A renamed tag changes the tag names its items carry. A deleted tag has already lost its
+	// items (content_tag cascades), so its walk ends at once; their documents shed the name the
+	// next time they are synced.
+	d.On(outbox.TopicTagChanged, func(ctx context.Context, e outbox.Event) error {
+		return ix.reindexTagChunk(ctx, scopeCursor{TagID: e.AggregateID})
+	})
+	d.On(outbox.TopicSearchReindexTag, ix.onScopeChunk(ix.reindexTagChunk))
+}
+
+// scopeCursor is the position of a re-index walk over one category's or one tag's items.
+type scopeCursor struct {
+	CategoryID int64 `json:"categoryId,omitempty"`
+	TagID      int64 `json:"tagId,omitempty"`
+	After      int64 `json:"after"`
+}
+
+func (ix *Indexer) onScopeChunk(run func(context.Context, scopeCursor) error) outbox.Handler {
+	return func(ctx context.Context, e outbox.Event) error {
+		var cur scopeCursor
 		if err := json.Unmarshal(e.Payload, &cur); err != nil {
 			return err
 		}
-		return ix.reindexCategoryChunk(ctx, cur)
-	})
-}
-
-type categoryCursor struct {
-	CategoryID int64 `json:"categoryId"`
-	After      int64 `json:"after"`
+		return run(ctx, cur)
+	}
 }
 
 // reindexCategoryChunk re-syncs one chunk of a category subtree's items and chains the next, so
 // a category with millions of items is handled in bounded steps. A deleted category has no
 // items left (deletion requires an empty category), so its walk ends at once.
-func (ix *Indexer) reindexCategoryChunk(ctx context.Context, cur categoryCursor) error {
+func (ix *Indexer) reindexCategoryChunk(ctx context.Context, cur scopeCursor) error {
 	ids, err := ix.src.LiveIDsInCategoryAfter(ctx, cur.CategoryID, cur.After, reindexChunk)
 	if err != nil {
 		return err
 	}
+	return ix.syncAndChain(ctx, ids, outbox.TopicSearchReindexCategory, cur.CategoryID, cur)
+}
+
+// reindexTagChunk is reindexCategoryChunk for the items carrying one tag.
+func (ix *Indexer) reindexTagChunk(ctx context.Context, cur scopeCursor) error {
+	ids, err := ix.src.LiveIDsWithTagAfter(ctx, cur.TagID, cur.After, reindexChunk)
+	if err != nil {
+		return err
+	}
+	return ix.syncAndChain(ctx, ids, outbox.TopicSearchReindexTag, cur.TagID, cur)
+}
+
+// syncAndChain syncs one chunk and, when it was full, enqueues the walk's next chunk.
+func (ix *Indexer) syncAndChain(ctx context.Context, ids []int64, topic string, aggregateID int64, cur scopeCursor) error {
 	if err := ix.Sync(ctx, ids); err != nil {
 		return err
 	}
 	if len(ids) < reindexChunk {
 		return nil
 	}
-	next := categoryCursor{CategoryID: cur.CategoryID, After: ids[len(ids)-1]}
-	return ix.enqueue(ctx, outbox.TopicSearchReindexCategory, cur.CategoryID, next)
+	cur.After = ids[len(ids)-1]
+	return ix.enqueue(ctx, topic, aggregateID, cur)
 }
 
 // EnsureSettings applies the index settings (filterable and searchable attributes) when the

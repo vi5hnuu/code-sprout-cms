@@ -1341,6 +1341,41 @@ func (q *Queries) ListLiveIDsInCategoryAfter(ctx context.Context, arg ListLiveID
 	return items, nil
 }
 
+const listLiveIDsWithTagAfter = `-- name: ListLiveIDsWithTagAfter :many
+SELECT content_id FROM content_tag
+WHERE tag_id = $1 AND published_at IS NOT NULL AND content_id > $2
+ORDER BY content_id
+LIMIT $3
+`
+
+type ListLiveIDsWithTagAfterParams struct {
+	TagID    int64
+	AfterID  int64
+	RowLimit int32
+}
+
+// Keyset walk over live items carrying one tag, for re-indexing after the tag is renamed
+// (their documents carry its name). Walks the content_tag primary key.
+func (q *Queries) ListLiveIDsWithTagAfter(ctx context.Context, arg ListLiveIDsWithTagAfterParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, listLiveIDsWithTagAfter, arg.TagID, arg.AfterID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var content_id int64
+		if err := rows.Scan(&content_id); err != nil {
+			return nil, err
+		}
+		items = append(items, content_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listLiveLinks = `-- name: ListLiveLinks :many
 SELECT l.kind, c.id, c.type, c.locale, c.slug, c.title,
        COALESCE(split_part(cat.path::text, '.', 1), '')::text AS section

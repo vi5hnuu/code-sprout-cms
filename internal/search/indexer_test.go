@@ -32,6 +32,7 @@ func (m *memIndex) Search(context.Context, Query) (Result, error) { return Resul
 type memSource struct {
 	n        int64
 	category string
+	tag      string
 }
 
 func (s *memSource) Indexable(_ context.Context, id int64) (content.Indexable, bool, error) {
@@ -39,7 +40,7 @@ func (s *memSource) Indexable(_ context.Context, id int64) (content.Indexable, b
 		return content.Indexable{}, false, nil
 	}
 	return content.Indexable{ID: id, Type: content.TypeArticle, Slug: "a", Title: "A", CategoryPath: "dsa/arrays",
-		CategoryName: s.category, PublishedAt: time.Unix(0, 0)}, true, nil
+		CategoryName: s.category, Tags: []string{s.tag}, PublishedAt: time.Unix(0, 0)}, true, nil
 }
 
 func (s *memSource) LiveIDsAfter(ctx context.Context, after int64, limit int32) ([]int64, error) {
@@ -52,6 +53,10 @@ func (s *memSource) LiveIDsInCategoryAfter(_ context.Context, _ int64, after int
 		ids = append(ids, id)
 	}
 	return ids, nil
+}
+
+func (s *memSource) LiveIDsWithTagAfter(ctx context.Context, _ int64, after int64, limit int32) ([]int64, error) {
+	return s.LiveIDsInCategoryAfter(ctx, 7, after, limit)
 }
 
 // handlers stands in for the outbox dispatcher: topic → handlers, run in order.
@@ -74,38 +79,53 @@ func (noDifficulties) Difficulties(context.Context, []int64) (map[int64]problem.
 	return map[int64]problem.Difficulty{}, nil
 }
 
-// A renamed category re-indexes every item under it, in bounded chunks chained through the
-// outbox, so the documents show the new name however large the category is.
-func TestCategoryChangeReindexesItsItemsInChunks(t *testing.T) {
-	ctx := context.Background()
-	src := &memSource{n: reindexChunk*2 + 5, category: "Arrays"}
-	idx := &memIndex{docs: map[int64]Document{}}
-	var queued []outbox.Event
-	ix := NewIndexer(idx, src, noDifficulties{}, func(_ context.Context, topic string, id int64, payload any) error {
-		raw, _ := json.Marshal(payload)
-		queued = append(queued, outbox.Event{Topic: topic, AggregateID: id, Payload: raw})
-		return nil
-	})
-	d := handlers{}
-	ix.Register(d)
+// A renamed category or tag re-indexes every item under it, in bounded chunks chained through
+// the outbox, so the documents show the new name however large the category or tag is.
+func TestScopeChangeReindexesItsItemsInChunks(t *testing.T) {
+	cases := []struct {
+		name   string
+		topic  string
+		rename func(*memSource)
+		check  func(Document) bool
+	}{
+		{"category", outbox.TopicCategoryChanged, func(s *memSource) { s.category = "Arrays & Hashing" },
+			func(d Document) bool { return d.CategoryName == "Arrays & Hashing" }},
+		{"tag", outbox.TopicTagChanged, func(s *memSource) { s.tag = "Two pointers" },
+			func(d Document) bool { return len(d.Tags) == 1 && d.Tags[0] == "Two pointers" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			src := &memSource{n: reindexChunk*2 + 5, category: "Arrays", tag: "Pointers"}
+			idx := &memIndex{docs: map[int64]Document{}}
+			var queued []outbox.Event
+			ix := NewIndexer(idx, src, noDifficulties{}, func(_ context.Context, topic string, id int64, payload any) error {
+				raw, _ := json.Marshal(payload)
+				queued = append(queued, outbox.Event{Topic: topic, AggregateID: id, Payload: raw})
+				return nil
+			})
+			d := handlers{}
+			ix.Register(d)
 
-	src.category = "Arrays & Hashing"
-	if err := d.dispatch(ctx, outbox.Event{Topic: outbox.TopicCategoryChanged, AggregateID: 7}); err != nil {
-		t.Fatal(err)
-	}
-	for len(queued) > 0 {
-		e := queued[0]
-		queued = queued[1:]
-		if err := d.dispatch(ctx, e); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if int64(len(idx.docs)) != src.n {
-		t.Fatalf("indexed %d documents, want %d", len(idx.docs), src.n)
-	}
-	for id, doc := range idx.docs {
-		if doc.CategoryName != "Arrays & Hashing" {
-			t.Fatalf("document %d still shows %q", id, doc.CategoryName)
-		}
+			tc.rename(src)
+			if err := d.dispatch(ctx, outbox.Event{Topic: tc.topic, AggregateID: 7}); err != nil {
+				t.Fatal(err)
+			}
+			for len(queued) > 0 {
+				e := queued[0]
+				queued = queued[1:]
+				if err := d.dispatch(ctx, e); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if int64(len(idx.docs)) != src.n {
+				t.Fatalf("indexed %d documents, want %d", len(idx.docs), src.n)
+			}
+			for id, doc := range idx.docs {
+				if !tc.check(doc) {
+					t.Fatalf("document %d not updated: %+v", id, doc)
+				}
+			}
+		})
 	}
 }

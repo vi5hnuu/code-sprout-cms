@@ -364,6 +364,14 @@ WHERE cat.path <@ (SELECT root.path FROM category root WHERE root.id = sqlc.arg(
 ORDER BY c.id
 LIMIT sqlc.arg(row_limit);
 
+-- Keyset walk over live items carrying one tag, for re-indexing after the tag is renamed
+-- (their documents carry its name). Walks the content_tag primary key.
+-- name: ListLiveIDsWithTagAfter :many
+SELECT content_id FROM content_tag
+WHERE tag_id = sqlc.arg(tag_id) AND published_at IS NOT NULL AND content_id > sqlc.arg(after_id)
+ORDER BY content_id
+LIMIT sqlc.arg(row_limit);
+
 -- ── Sitemaps ────────────────────────────────────────────────────────────────
 
 -- Live public items in one id-range chunk (index-only on idx_content_sitemap).

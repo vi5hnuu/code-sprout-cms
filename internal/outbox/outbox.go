@@ -28,6 +28,8 @@ const (
 	// {"categoryId": id, "after": id}: one chunk of re-indexing a category's items after it was
 	// renamed or moved (their documents carry its path and name).
 	TopicSearchReindexCategory = "search.reindex_category"
+	// {"tagId": id, "after": id}: one chunk of re-indexing a tag's items after it was renamed.
+	TopicSearchReindexTag = "search.reindex_tag"
 )
 
 type CommentsEvent struct {

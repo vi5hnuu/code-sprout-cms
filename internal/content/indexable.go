@@ -51,6 +51,14 @@ func (r *Reader) Indexable(ctx context.Context, id int64) (Indexable, bool, erro
 	return ix, true, nil
 }
 
+// LiveIDsWithTagAfter walks the live ids carrying a tag, in order. Search re-checks each
+// item's visibility, so non-public ones are dropped there.
+func (r *Reader) LiveIDsWithTagAfter(ctx context.Context, tagID, after int64, limit int32) ([]int64, error) {
+	return contentdb.New(r.db.Replica).ListLiveIDsWithTagAfter(ctx, contentdb.ListLiveIDsWithTagAfterParams{
+		TagID: tagID, AfterID: after, RowLimit: limit,
+	})
+}
+
 // LiveIDsInCategoryAfter walks the live public ids filed under a category's subtree, in order.
 func (r *Reader) LiveIDsInCategoryAfter(ctx context.Context, categoryID, after int64, limit int32) ([]int64, error) {
 	return contentdb.New(r.db.Replica).ListLiveIDsInCategoryAfter(ctx, contentdb.ListLiveIDsInCategoryAfterParams{
