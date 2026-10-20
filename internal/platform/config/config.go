@@ -86,13 +86,15 @@ type JudgeConfig struct {
 }
 
 type StorageConfig struct {
-	Endpoint      string
-	Region        string
-	AccessKey     string
-	SecretKey     string
-	PublicBucket  string
-	PrivateBucket string
-	PublicBaseURL string
+	Endpoint string
+	// PublicEndpoint: where browsers reach storage, if not at Endpoint (optional).
+	PublicEndpoint string
+	Region         string
+	AccessKey      string
+	SecretKey      string
+	PublicBucket   string
+	PrivateBucket  string
+	PublicBaseURL  string
 }
 
 type AuthConfig struct {
@@ -149,13 +151,14 @@ func Load() (Config, error) {
 		},
 
 		Storage: StorageConfig{
-			Endpoint:      req("STORAGE_ENDPOINT"),
-			Region:        envOr("STORAGE_REGION", "auto"),
-			AccessKey:     req("STORAGE_ACCESS_KEY"),
-			SecretKey:     req("STORAGE_SECRET_KEY"),
-			PublicBucket:  req("STORAGE_PUBLIC_BUCKET"),
-			PrivateBucket: req("STORAGE_PRIVATE_BUCKET"),
-			PublicBaseURL: strings.TrimRight(req("STORAGE_PUBLIC_BASE_URL"), "/"),
+			Endpoint:       req("STORAGE_ENDPOINT"),
+			PublicEndpoint: strings.TrimRight(os.Getenv("STORAGE_PUBLIC_ENDPOINT"), "/"),
+			Region:         envOr("STORAGE_REGION", "auto"),
+			AccessKey:      req("STORAGE_ACCESS_KEY"),
+			SecretKey:      req("STORAGE_SECRET_KEY"),
+			PublicBucket:   req("STORAGE_PUBLIC_BUCKET"),
+			PrivateBucket:  req("STORAGE_PRIVATE_BUCKET"),
+			PublicBaseURL:  strings.TrimRight(req("STORAGE_PUBLIC_BASE_URL"), "/"),
 		},
 	}
 	if cfg.DatabaseReplicaURL == "" {

@@ -22,10 +22,14 @@ import (
 )
 
 type Config struct {
-	Endpoint  string
-	Region    string
-	AccessKey string
-	SecretKey string
+	Endpoint string
+	// PublicEndpoint is the address browsers reach storage at, when it differs from Endpoint
+	// (the API talks to storage over a private network). Presigned upload URLs are signed for
+	// it; empty means Endpoint.
+	PublicEndpoint string
+	Region         string
+	AccessKey      string
+	SecretKey      string
 }
 
 // PresignedUpload is what a client needs to PUT bytes directly to storage. Headers must be
@@ -79,7 +83,13 @@ func NewS3(cfg Config) *S3 {
 		RequestChecksumCalculation: aws.RequestChecksumCalculationWhenRequired,
 		ResponseChecksumValidation: aws.ResponseChecksumValidationWhenRequired,
 	})
-	return &S3{client: client, presign: s3.NewPresignClient(client)}
+	presign := s3.NewPresignClient(client)
+	if cfg.PublicEndpoint != "" && cfg.PublicEndpoint != cfg.Endpoint {
+		presign = s3.NewPresignClient(client, func(o *s3.PresignOptions) {
+			o.ClientOptions = append(o.ClientOptions, func(co *s3.Options) { co.BaseEndpoint = aws.String(cfg.PublicEndpoint) })
+		})
+	}
+	return &S3{client: client, presign: presign}
 }
 
 func (s *S3) PresignPut(ctx context.Context, bucket, key, contentType string, size int64, sha256 []byte, ttl time.Duration) (PresignedUpload, error) {
@@ -150,7 +160,7 @@ func (s *S3) Delete(ctx context.Context, bucket, key string) error {
 
 // FromConfig builds the S3 client from process configuration.
 func FromConfig(c config.StorageConfig) *S3 {
-	return NewS3(Config{Endpoint: c.Endpoint, Region: c.Region, AccessKey: c.AccessKey, SecretKey: c.SecretKey})
+	return NewS3(Config{Endpoint: c.Endpoint, PublicEndpoint: c.PublicEndpoint, Region: c.Region, AccessKey: c.AccessKey, SecretKey: c.SecretKey})
 }
 
 func (s *S3) Put(ctx context.Context, bucket, key, contentType string, body []byte) error {
