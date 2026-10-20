@@ -113,6 +113,19 @@ func TestUpdateProfile(t *testing.T) {
 	if e, ok := apperr.As(err); !ok || e.Fields["avatarFileId"] == "" {
 		t.Fatalf("unknown avatar accepted: %v", err)
 	}
+	// Only an avatar the reader uploaded themselves.
+	var avatar int64
+	if err := d.Primary.QueryRow(ctx, `INSERT INTO file (owner_id, bucket, storage_key, mime, size_bytes, sha256, status, purpose)
+		VALUES ($1, 'sprout-public', $2::text, 'image/png', 1, sha256(convert_to($2::text, 'UTF8')), 'READY', 'AVATAR') RETURNING id`, a, testenv.Unique("avatar")).Scan(&avatar); err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.UpdateProfile(ctx, b, UpdateProfile{DisplayName: "B", AvatarFileID: &avatar})
+	if e, ok := apperr.As(err); !ok || e.Fields["avatarFileId"] == "" {
+		t.Fatalf("someone else's avatar accepted: %v", err)
+	}
+	if p, err := svc.UpdateProfile(ctx, a, UpdateProfile{Handle: &handle, DisplayName: "Asha", AvatarFileID: &avatar}); err != nil || p.AvatarURL == nil {
+		t.Fatalf("own avatar = %+v, %v", p, err)
+	}
 	pub, err := svc.ByHandle(ctx, handle)
 	if err != nil || pub.ID != a || pub.DisplayName != "Asha" {
 		t.Fatalf("by handle = %+v, %v", pub, err)

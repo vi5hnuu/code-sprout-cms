@@ -217,6 +217,46 @@ func (q *Queries) LeaseVerifyingFile(ctx context.Context, leaseSeconds int32) (F
 	return i, err
 }
 
+const listDeletingFiles = `-- name: ListDeletingFiles :many
+SELECT id, owner_id, bucket, storage_key, mime, size_bytes, sha256, status, width, height, lease_until, purpose, created_at, completed_at FROM file WHERE status = 'DELETING' ORDER BY id LIMIT $1
+`
+
+// Files let go of by the system (StatusDeleting), for garbage collection.
+func (q *Queries) ListDeletingFiles(ctx context.Context, rowLimit int32) ([]File, error) {
+	rows, err := q.db.Query(ctx, listDeletingFiles, rowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []File{}
+	for rows.Next() {
+		var i File
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerID,
+			&i.Bucket,
+			&i.StorageKey,
+			&i.Mime,
+			&i.SizeBytes,
+			&i.Sha256,
+			&i.Status,
+			&i.Width,
+			&i.Height,
+			&i.LeaseUntil,
+			&i.Purpose,
+			&i.CreatedAt,
+			&i.CompletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listFilesByID = `-- name: ListFilesByID :many
 SELECT id, owner_id, bucket, storage_key, mime, size_bytes, sha256, status, width, height, lease_until, purpose, created_at, completed_at FROM file WHERE id = ANY ($1::bigint[])
 `
@@ -431,4 +471,14 @@ func (q *Queries) MarkFileVerifying(ctx context.Context, id int64) (File, error)
 		&i.CompletedAt,
 	)
 	return i, err
+}
+
+const markUserFilesDeleting = `-- name: MarkUserFilesDeleting :exec
+UPDATE file SET status = 'DELETING' WHERE owner_id = $1 AND purpose = 'AVATAR'
+`
+
+// Account erase: the user's avatars stop being served and are collected.
+func (q *Queries) MarkUserFilesDeleting(ctx context.Context, ownerID *int64) error {
+	_, err := q.db.Exec(ctx, markUserFilesDeleting, ownerID)
+	return err
 }

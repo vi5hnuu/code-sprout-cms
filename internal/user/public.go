@@ -14,6 +14,7 @@ import (
 // Files resolves avatar ids to public files (implemented by asset.Service).
 type Files interface {
 	Describe(ctx context.Context, ids []int64) (map[int64]asset.File, error)
+	Stored(ctx context.Context, id int64) (asset.Stored, error)
 }
 
 // PublicUser is what anyone may see about an author.
@@ -103,11 +104,13 @@ func (s *Service) UpdateProfile(ctx context.Context, id int64, in UpdateProfile)
 		f["bio"] = "Bio is at most 300 characters."
 	}
 	if in.AvatarFileID != nil {
-		files, err := s.files.Describe(ctx, []int64{*in.AvatarFileID})
-		if err != nil {
+		// Only a picture the reader uploaded themselves: otherwise anyone could show another
+		// person's avatar (or keep it reachable after that person erased their account).
+		file, err := s.files.Stored(ctx, *in.AvatarFileID)
+		if _, isDomain := apperr.As(err); err != nil && !isDomain {
 			return Profile{}, err
 		}
-		if file, ok := files[*in.AvatarFileID]; !ok || file.Purpose != asset.PurposeAvatar {
+		if err != nil || file.Purpose != asset.PurposeAvatar || file.OwnerID == nil || *file.OwnerID != id {
 			f["avatarFileId"] = "Upload the picture as an AVATAR and complete the upload first."
 		}
 	}

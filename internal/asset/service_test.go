@@ -164,6 +164,32 @@ func TestTamperedUploadIsQuarantined(t *testing.T) {
 	wantCode(t, err, "upload.quarantined")
 }
 
+// A file declared as an image must decode as that image: an HTML page or a PNG labelled as
+// JPEG is quarantined, never served from the public bucket.
+func TestNonImageDeclaredAsImageIsQuarantined(t *testing.T) {
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+	author := testenv.User(t, svc.db)
+	for name, c := range map[string]struct {
+		mime string
+		body []byte
+	}{
+		"html as png": {"image/png", []byte("<html><script>alert(1)</script></html>" + testenv.Unique("x"))},
+		"png as jpeg": {"image/jpeg", pngBytes(t, 3, 3, 7)},
+	} {
+		ticket, err := svc.CreateUpload(ctx, author, CreateUpload{Purpose: PurposeAsset, Mime: c.mime, SizeBytes: int64(len(c.body)), SHA256: hexSHA(c.body)})
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		put(t, ticket, c.body)
+		_, err = svc.Complete(ctx, author, ticket.File.ID)
+		wantCode(t, err, "upload.mismatch")
+		if got, _ := svc.Get(ctx, author, ticket.File.ID); got.Status != StatusQuarantined {
+			t.Fatalf("%s: status = %s", name, got.Status)
+		}
+	}
+}
+
 func TestLargeFileVerifiedByWorker(t *testing.T) {
 	svc, _ := newTestService(t)
 	svc.inlineVerifyLimit = 0 // treat every file as large

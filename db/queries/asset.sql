@@ -51,6 +51,14 @@ SELECT * FROM file WHERE status = 'PENDING' AND created_at < sqlc.arg(before) OR
 -- name: ListStaleQuarantinedFiles :many
 SELECT * FROM file WHERE status = 'QUARANTINED' AND created_at < sqlc.arg(before) ORDER BY created_at LIMIT sqlc.arg(row_limit);
 
+-- Files let go of by the system (StatusDeleting), for garbage collection.
+-- name: ListDeletingFiles :many
+SELECT * FROM file WHERE status = 'DELETING' ORDER BY id LIMIT sqlc.arg(row_limit);
+
+-- Account erase: the user's avatars stop being served and are collected.
+-- name: MarkUserFilesDeleting :exec
+UPDATE file SET status = 'DELETING' WHERE owner_id = sqlc.arg(owner_id) AND purpose = 'AVATAR';
+
 -- name: DeleteFile :exec
 DELETE FROM file WHERE id = $1;
 

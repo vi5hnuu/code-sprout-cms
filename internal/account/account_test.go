@@ -7,6 +7,7 @@ import (
 	"code-sprout-cms/internal/access"
 	"code-sprout-cms/internal/account"
 	"code-sprout-cms/internal/arenatest"
+	"code-sprout-cms/internal/asset"
 	"code-sprout-cms/internal/collection"
 	"code-sprout-cms/internal/engagement"
 	"code-sprout-cms/internal/judge"
@@ -61,9 +62,25 @@ func TestEraseRemovesPersonalDataAndKeepsOthers(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// The reader's avatar, and an article image they uploaded (it belongs to the page now).
+	var avatarID, imageID int64
+	for _, f := range []struct {
+		purpose string
+		id      *int64
+	}{{"AVATAR", &avatarID}, {"ASSET", &imageID}} {
+		if err := e.DB.Primary.QueryRow(ctx, `INSERT INTO file (owner_id, bucket, storage_key, mime, size_bytes, sha256, status, purpose)
+			VALUES ($1, 'sprout-public', $2::text, 'image/png', 1, sha256(convert_to($2::text, 'UTF8')), 'READY', $3) RETURNING id`,
+			reader.UserID, testenv.Unique("erase-file"), f.purpose).Scan(f.id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := e.DB.Primary.Exec(ctx, `UPDATE app_user SET avatar_file_id = $1 WHERE id = $2`, avatarID, reader.UserID); err != nil {
+		t.Fatal(err)
+	}
+
 	forgotten := ""
 	svc := account.NewService(e.DB, func(sub string) { forgotten = sub },
-		engagement.EraseUser, library.EraseUser, submission.EraseUser, collection.EraseUser, access.EraseUser, users.EraseUser)
+		engagement.EraseUser, library.EraseUser, submission.EraseUser, collection.EraseUser, access.EraseUser, asset.EraseUser, users.EraseUser)
 	if err := svc.Erase(ctx, reader); err != nil {
 		t.Fatal(err)
 	}
@@ -107,5 +124,12 @@ func TestEraseRemovesPersonalDataAndKeepsOthers(t *testing.T) {
 	}
 	if prof.DisplayName != "Former member" || prof.Handle != nil || prof.Bio != nil {
 		t.Errorf("profile not anonymised: %+v", prof)
+	}
+	// The avatar is let go of (garbage collection deletes it); the article image stays.
+	if n := count(`SELECT count(*) FROM file WHERE id = $1 AND status = 'DELETING'`, avatarID); n != 1 {
+		t.Errorf("avatar not marked for deletion")
+	}
+	if n := count(`SELECT count(*) FROM file WHERE id = $1 AND status = 'READY'`, imageID); n != 1 {
+		t.Errorf("an uploaded page image was removed with the account")
 	}
 }

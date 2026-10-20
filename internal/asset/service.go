@@ -57,6 +57,9 @@ const (
 	StatusVerifying   Status = "VERIFYING"
 	StatusReady       Status = "READY"
 	StatusQuarantined Status = "QUARANTINED"
+	// StatusDeleting: let go of by the system (an erased account's avatars); garbage collection
+	// removes it. Never returned to clients: its owner no longer exists.
+	StatusDeleting Status = "DELETING"
 )
 
 const (
@@ -315,14 +318,14 @@ func (s *Service) VerifyNext(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if err := s.verifyHash(ctx, f); err != nil {
-		if _, isDomain := apperr.As(err); isDomain {
-			return true, nil // quarantined; nothing to retry
-		}
-		return true, err // storage hiccup: the lease expires and another pass retries
+	err = s.verifyHash(ctx, f)
+	if err == nil {
+		_, err = s.markReady(ctx, f)
 	}
-	_, err = s.markReady(ctx, f)
-	return true, err
+	if _, isDomain := apperr.As(err); isDomain {
+		return true, nil // quarantined; nothing to retry
+	}
+	return true, err // nil, or a storage hiccup: the lease expires and another pass retries
 }
 
 // verifyHash streams the object and compares its SHA-256, quarantining on mismatch.
@@ -345,7 +348,11 @@ func (s *Service) verifyHash(ctx context.Context, f assetdb.File) error {
 func (s *Service) markReady(ctx context.Context, f assetdb.File) (File, error) {
 	var width, height *int32
 	if rules[Purpose(f.Purpose)].mimes[f.Mime].image {
-		width, height = s.imageSize(ctx, f)
+		w, h, err := s.imageSize(ctx, f)
+		if err != nil {
+			return File{}, err
+		}
+		width, height = &w, &h
 	}
 	ready, err := assetdb.New(s.db.Primary).MarkFileReady(ctx, assetdb.MarkFileReadyParams{ID: f.ID, Width: width, Height: height})
 	if err != nil {
@@ -354,22 +361,24 @@ func (s *Service) markReady(ctx context.Context, f assetdb.File) (File, error) {
 	return s.view(ready), nil
 }
 
-// imageSize decodes only the image header. An image whose header cannot be read is still
-// accepted (it was verified byte-for-byte); it just renders without reserved dimensions.
-func (s *Service) imageSize(ctx context.Context, f assetdb.File) (*int32, *int32) {
+// imageSize decodes only the image header. A file declared as an image must really be one, in
+// the declared format: anything else (a polyglot, an HTML page renamed .png) is quarantined
+// rather than served from the public bucket under an image type. A storage error is returned
+// as is, so the caller can retry.
+func (s *Service) imageSize(ctx context.Context, f assetdb.File) (int32, int32, error) {
 	r, err := s.store.Open(ctx, f.Bucket, f.StorageKey, imageHeaderBytes)
 	if err != nil {
-		slog.Warn("image header read failed", "file", f.ID, "err", err)
-		return nil, nil
+		return 0, 0, fmt.Errorf("image header %d: %w", f.ID, err)
 	}
 	defer r.Close()
-	cfg, _, err := image.DecodeConfig(r)
+	cfg, format, err := image.DecodeConfig(r)
 	if err != nil {
-		slog.Warn("image header decode failed", "file", f.ID, "err", err)
-		return nil, nil
+		return 0, 0, s.quarantine(ctx, f, "not a decodable image: "+err.Error())
 	}
-	w, h := int32(cfg.Width), int32(cfg.Height)
-	return &w, &h
+	if "image/"+format != f.Mime || cfg.Width <= 0 || cfg.Height <= 0 {
+		return 0, 0, s.quarantine(ctx, f, fmt.Sprintf("image is %s %dx%d, declared %s", format, cfg.Width, cfg.Height, f.Mime))
+	}
+	return int32(cfg.Width), int32(cfg.Height), nil
 }
 
 // quarantine marks a file failed and deletes its object, returning the error to report.
@@ -480,15 +489,20 @@ func (s *Service) CollectGarbage(ctx context.Context) (int, error) {
 	if err != nil {
 		return removed, err
 	}
-	for _, files := range [][]assetdb.File{pending, quarantined} {
+	deleting, err := q.ListDeletingFiles(ctx, gcBatch)
+	if err != nil {
+		return removed, err
+	}
+	for _, files := range [][]assetdb.File{pending, quarantined, deleting} {
 		for _, f := range files {
-			if err := s.store.Delete(ctx, f.Bucket, f.StorageKey); err != nil {
-				slog.Warn("gc: delete object", "file", f.ID, "err", err)
-				continue
-			}
+			// The row goes first: one still referenced cannot be deleted, and its object must
+			// then stay too. An object left behind by a failed delete only costs storage.
 			if err := q.DeleteFile(ctx, f.ID); err != nil {
 				slog.Warn("gc: delete row", "file", f.ID, "err", err) // still referenced: keep it
 				continue
+			}
+			if err := s.store.Delete(ctx, f.Bucket, f.StorageKey); err != nil {
+				slog.Warn("gc: delete object; it is now orphaned", "file", f.ID, "bucket", f.Bucket, "key", f.StorageKey, "err", err)
 			}
 			removed++
 		}
