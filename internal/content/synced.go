@@ -9,6 +9,7 @@ import (
 	"code-sprout-cms/internal/content/contentdb"
 	"code-sprout-cms/internal/outbox"
 	"code-sprout-cms/internal/platform/apperr"
+	"code-sprout-cms/internal/platform/db"
 )
 
 // SyncedItem is an item mirrored from an outside source the owner controls (a YouTube upload).
@@ -130,16 +131,15 @@ func (s *Service) ArchiveSynced(ctx context.Context, tx pgx.Tx, ownerID, id int6
 }
 
 // SetLinks replaces an item's links of one kind (e.g. a problem's VIDEO solution), for the
-// domains built on content. Content still owns the table and its rules.
-func SetLinks(ctx context.Context, tx pgx.Tx, fromID int64, kind string, toIDs []int64) error {
+// domains built on content. Content still owns the table and its rules. It returns the targets
+// linked before, so callers can refresh pages that list their backlinks.
+func SetLinks(ctx context.Context, tx pgx.Tx, fromID int64, kind string, toIDs []int64) ([]int64, error) {
 	q := contentdb.New(tx)
-	if err := q.DeleteLinksOfKind(ctx, contentdb.DeleteLinksOfKindParams{FromID: fromID, Kind: kind}); err != nil {
-		return err
+	previous, err := q.DeleteLinksOfKind(ctx, contentdb.DeleteLinksOfKindParams{FromID: fromID, Kind: kind})
+	if err != nil || len(toIDs) == 0 {
+		return previous, err
 	}
-	if len(toIDs) == 0 {
-		return nil
-	}
-	return q.InsertLinks(ctx, contentdb.InsertLinksParams{FromID: fromID, Kind: kind, ToIds: toIDs})
+	return previous, q.InsertLinks(ctx, contentdb.InsertLinksParams{FromID: fromID, Kind: kind, ToIds: toIDs})
 }
 
 // Touched records that a live item's public view changed outside its own publish (e.g. a
@@ -150,6 +150,31 @@ func Touched(ctx context.Context, tx pgx.Tx, id int64) error {
 		return err
 	}
 	return outbox.Publish(ctx, tx, outbox.TopicContentUpdated, id, outbox.ContentEvent{Type: c.Type, Locale: c.Locale, Slug: c.Slug})
+}
+
+// LinkTargets returns the items one item links to with kind.
+func LinkTargets(ctx context.Context, tx pgx.Tx, fromID int64, kind string) ([]int64, error) {
+	return contentdb.New(tx).ListLinkTargets(ctx, contentdb.ListLinkTargetsParams{FromID: fromID, Kind: kind})
+}
+
+// TouchedIfLive is Touched for each of ids that is published; the others have no page to refresh.
+func TouchedIfLive(ctx context.Context, tx pgx.Tx, ids ...int64) error {
+	for _, id := range ids {
+		c, err := contentdb.New(tx).GetContent(ctx, id)
+		if db.IsNoRows(err) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if Status(c.Status) != StatusPublished {
+			continue
+		}
+		if err := outbox.Publish(ctx, tx, outbox.TopicContentUpdated, id, outbox.ContentEvent{Type: c.Type, Locale: c.Locale, Slug: c.Slug}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // TitleMatch is a live problem whose normalised title equals one of the phrases asked about.

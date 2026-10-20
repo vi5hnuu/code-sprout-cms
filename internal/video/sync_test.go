@@ -208,11 +208,21 @@ func TestSyncMirrorsAChannel(t *testing.T) {
 	settings := studio.Settings
 	shortID := idOf[short]
 	settings.VideoContentID, settings.EditorialContentID = &shortID, &editorialID
+	// Both videos' pages list the problem ("Practice this problem"), so both refresh.
+	refreshes := func(id int64) (n int) {
+		_ = e.DB.Primary.QueryRow(ctx, `SELECT count(*) FROM outbox WHERE topic = 'content.updated' AND aggregate_id = $1`, id).Scan(&n)
+		return
+	}
+	oldVideo := linkOf("VIDEO")
+	oldBefore, newBefore := refreshes(oldVideo), refreshes(shortID)
 	if _, err := e.Problems.UpdateSettings(ctx, e.Editor, problemID, settings); err != nil {
 		t.Fatal(err)
 	}
 	if linkOf("VIDEO") != idOf[short] || linkOf("EDITORIAL") != editorialID {
 		t.Fatalf("studio choice not applied: video %d editorial %d", linkOf("VIDEO"), linkOf("EDITORIAL"))
+	}
+	if refreshes(oldVideo) != oldBefore+1 || refreshes(shortID) != newBefore+1 {
+		t.Errorf("the videos whose problem link changed were not refreshed")
 	}
 	forceReconcile(t, e, channel)
 	if err := newSyncer(1000).SyncAll(ctx); err != nil {

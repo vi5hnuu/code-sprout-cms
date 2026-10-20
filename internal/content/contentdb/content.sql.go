@@ -89,8 +89,9 @@ func (q *Queries) DeleteContentTags(ctx context.Context, contentID int64) error 
 	return err
 }
 
-const deleteLinksOfKind = `-- name: DeleteLinksOfKind :exec
+const deleteLinksOfKind = `-- name: DeleteLinksOfKind :many
 DELETE FROM content_link WHERE from_id = $1 AND kind = $2
+RETURNING to_id
 `
 
 type DeleteLinksOfKindParams struct {
@@ -98,9 +99,24 @@ type DeleteLinksOfKindParams struct {
 	Kind   string
 }
 
-func (q *Queries) DeleteLinksOfKind(ctx context.Context, arg DeleteLinksOfKindParams) error {
-	_, err := q.db.Exec(ctx, deleteLinksOfKind, arg.FromID, arg.Kind)
-	return err
+func (q *Queries) DeleteLinksOfKind(ctx context.Context, arg DeleteLinksOfKindParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, deleteLinksOfKind, arg.FromID, arg.Kind)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var to_id int64
+		if err := rows.Scan(&to_id); err != nil {
+			return nil, err
+		}
+		items = append(items, to_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const deleteSlugRedirect = `-- name: DeleteSlugRedirect :exec
@@ -890,6 +906,35 @@ func (q *Queries) ListContentTagIDs(ctx context.Context, contentID int64) ([]int
 			return nil, err
 		}
 		items = append(items, tag_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLinkTargets = `-- name: ListLinkTargets :many
+SELECT to_id FROM content_link WHERE from_id = $1 AND kind = $2 ORDER BY position, to_id
+`
+
+type ListLinkTargetsParams struct {
+	FromID int64
+	Kind   string
+}
+
+func (q *Queries) ListLinkTargets(ctx context.Context, arg ListLinkTargetsParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, listLinkTargets, arg.FromID, arg.Kind)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var to_id int64
+		if err := rows.Scan(&to_id); err != nil {
+			return nil, err
+		}
+		items = append(items, to_id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

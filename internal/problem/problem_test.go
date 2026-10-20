@@ -134,6 +134,48 @@ func TestPublishedProblemLifecycle(t *testing.T) {
 	}
 }
 
+// The statement, examples, starter code and hints are part of the cached problem page, so
+// editing any of them on a live problem refreshes it like a publish does.
+func TestJudgingEditsRefreshTheLivePage(t *testing.T) {
+	e := arenatest.New(t)
+	ctx := context.Background()
+	tag := testenv.Unique("touch")
+	id := e.Publish(tag, []problem.Sample{{Input: "1 2", Output: "3"}}, cases(tag, 3), nil)
+	updates := func() (n int) {
+		if err := e.DB.Primary.QueryRow(ctx, `SELECT count(*) FROM outbox WHERE topic = 'content.updated' AND aggregate_id = $1`, id).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	edits := map[string]func() error{
+		"samples": func() error {
+			_, err := e.Problems.ReplaceSamples(ctx, e.Editor, id, []problem.Sample{{Input: "2 2", Output: "4"}})
+			return err
+		},
+		"template": func() error {
+			_, err := e.Problems.PutTemplate(ctx, e.Editor, id, problem.Template{Language: "go", StarterCode: "package main"})
+			return err
+		},
+		"template removed": func() error {
+			_, err := e.Problems.DeleteTemplate(ctx, e.Editor, id, "go")
+			return err
+		},
+		"hints": func() error {
+			_, err := e.Problems.ReplaceHints(ctx, e.Editor, id, []string{"Try two pointers."})
+			return err
+		},
+	}
+	for name, edit := range edits {
+		before := updates()
+		if err := edit(); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if updates() != before+1 {
+			t.Errorf("%s: the live page was not refreshed", name)
+		}
+	}
+}
+
 // A random pick is always a listed problem, and filters that match nothing say so.
 func TestRandomPicksListedProblems(t *testing.T) {
 	e := arenatest.New(t)

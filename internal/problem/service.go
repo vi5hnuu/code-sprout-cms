@@ -161,15 +161,17 @@ func (s *Service) UpdateSettings(ctx context.Context, p auth.Principal, id int64
 		}); err != nil {
 			return err
 		}
-		// The new editorial and video show at once on a live problem, like its difficulty.
+		// The new editorial and video show at once on a live problem, like its difficulty, and
+		// on the pages of the videos it now links (or stopped linking).
 		cleared := before.VideoContentID != nil && in.VideoContentID == nil
-		if err := writeLinks(ctx, tx, id, in.EditorialContentID, in.VideoContentID, cleared); err != nil {
+		videos, err := writeLinks(ctx, tx, id, in.EditorialContentID, in.VideoContentID, cleared)
+		if err != nil {
 			return err
 		}
-		if live, err := s.reader.LiveIDs(ctx, []int64{id}); err != nil {
+		if st, err := content.Revisions(ctx, tx, id); err != nil {
 			return err
-		} else if len(live) > 0 {
-			if err := content.Touched(ctx, tx, id); err != nil {
+		} else if st.IsLive {
+			if err := content.TouchedIfLive(ctx, tx, append([]int64{id}, videos...)...); err != nil {
 				return err
 			}
 		}
@@ -205,7 +207,7 @@ func (s *Service) ReplaceSamples(ctx context.Context, p auth.Principal, id int64
 				return err
 			}
 		}
-		return nil
+		return content.TouchedIfLive(ctx, tx, id)
 	}); err != nil {
 		return StudioView{}, err
 	}
@@ -232,8 +234,13 @@ func (s *Service) PutTemplate(ctx context.Context, p auth.Principal, id int64, t
 	if err := s.contents.RequireStructureEdit(ctx, p, id, content.TypeProblem); err != nil {
 		return StudioView{}, err
 	}
-	if err := problemdb.New(s.db.Primary).UpsertTemplate(ctx, problemdb.UpsertTemplateParams{
-		ProblemID: id, Language: t.Language, StarterCode: t.StarterCode, DriverCode: t.DriverCode,
+	if err := s.db.InTx(ctx, func(tx pgx.Tx) error {
+		if err := problemdb.New(tx).UpsertTemplate(ctx, problemdb.UpsertTemplateParams{
+			ProblemID: id, Language: t.Language, StarterCode: t.StarterCode, DriverCode: t.DriverCode,
+		}); err != nil {
+			return err
+		}
+		return content.TouchedIfLive(ctx, tx, id)
 	}); err != nil {
 		return StudioView{}, err
 	}
@@ -244,7 +251,12 @@ func (s *Service) DeleteTemplate(ctx context.Context, p auth.Principal, id int64
 	if err := s.contents.RequireStructureEdit(ctx, p, id, content.TypeProblem); err != nil {
 		return StudioView{}, err
 	}
-	if _, err := problemdb.New(s.db.Primary).DeleteTemplate(ctx, problemdb.DeleteTemplateParams{ProblemID: id, Language: language}); err != nil {
+	if err := s.db.InTx(ctx, func(tx pgx.Tx) error {
+		if _, err := problemdb.New(tx).DeleteTemplate(ctx, problemdb.DeleteTemplateParams{ProblemID: id, Language: language}); err != nil {
+			return err
+		}
+		return content.TouchedIfLive(ctx, tx, id)
+	}); err != nil {
 		return StudioView{}, err
 	}
 	return s.Studio(ctx, p, id)
@@ -270,7 +282,10 @@ func (s *Service) ReplaceHints(ctx context.Context, p auth.Principal, id int64, 
 		if err := q.DeleteHints(ctx, id); err != nil {
 			return err
 		}
-		return q.InsertHints(ctx, problemdb.InsertHintsParams{ProblemID: id, Bodies: clean})
+		if err := q.InsertHints(ctx, problemdb.InsertHintsParams{ProblemID: id, Bodies: clean}); err != nil {
+			return err
+		}
+		return content.TouchedIfLive(ctx, tx, id)
 	}); err != nil {
 		return StudioView{}, err
 	}
@@ -416,20 +431,27 @@ func (s *Service) onPublish(ctx context.Context, tx pgx.Tx, live content.LiveInf
 	if err != nil {
 		return err
 	}
-	return writeLinks(ctx, tx, live.ID, ext.EditorialContentID, ext.VideoContentID, false)
+	// The videos' pages list this problem by title, so they refresh with it.
+	videos, err := writeLinks(ctx, tx, live.ID, ext.EditorialContentID, ext.VideoContentID, false)
+	if err != nil {
+		return err
+	}
+	return content.TouchedIfLive(ctx, tx, videos...)
 }
 
 // writeLinks turns the problem's editorial and video settings into the page links readers see.
 // A chosen video replaces any automatic one; with none chosen, an automatic link (written by
 // the video sync) stays, unless the editor just cleared their choice (the sync re-links later).
-func writeLinks(ctx context.Context, tx pgx.Tx, id int64, editorial, video *int64, videoCleared bool) error {
-	if err := content.SetLinks(ctx, tx, id, "EDITORIAL", idsOf(editorial)); err != nil {
-		return err
+// It returns every video linked before or after: their pages list this problem.
+func writeLinks(ctx context.Context, tx pgx.Tx, id int64, editorial, video *int64, videoCleared bool) ([]int64, error) {
+	if _, err := content.SetLinks(ctx, tx, id, "EDITORIAL", idsOf(editorial)); err != nil {
+		return nil, err
 	}
-	if video != nil || videoCleared {
-		return content.SetLinks(ctx, tx, id, "VIDEO", idsOf(video))
+	if video == nil && !videoCleared {
+		return content.LinkTargets(ctx, tx, id, "VIDEO")
 	}
-	return nil
+	previous, err := content.SetLinks(ctx, tx, id, "VIDEO", idsOf(video))
+	return append(previous, idsOf(video)...), err
 }
 
 func idsOf(id *int64) []int64 {
@@ -474,7 +496,15 @@ func (s *Service) validateLinkTargets(ctx context.Context, in Settings) error {
 }
 
 func (s *Service) onUnpublish(ctx context.Context, tx pgx.Tx, id int64) error {
-	return problemdb.New(tx).SetListedAt(ctx, problemdb.SetListedAtParams{ContentID: id})
+	if err := problemdb.New(tx).SetListedAt(ctx, problemdb.SetListedAtParams{ContentID: id}); err != nil {
+		return err
+	}
+	// The problem leaves the "Practice this problem" list of its videos.
+	videos, err := content.LinkTargets(ctx, tx, id, "VIDEO")
+	if err != nil {
+		return err
+	}
+	return content.TouchedIfLive(ctx, tx, videos...)
 }
 
 // ── shared reads ─────────────────────────────────────────────────────────────

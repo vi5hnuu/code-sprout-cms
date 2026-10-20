@@ -112,8 +112,12 @@ UPDATE content_tag SET published_at = sqlc.narg(published_at) WHERE content_id =
 -- name: ListContentTagIDs :many
 SELECT tag_id FROM content_tag WHERE content_id = $1 ORDER BY tag_id;
 
--- name: DeleteLinksOfKind :exec
-DELETE FROM content_link WHERE from_id = sqlc.arg(from_id) AND kind = sqlc.arg(kind);
+-- name: DeleteLinksOfKind :many
+DELETE FROM content_link WHERE from_id = sqlc.arg(from_id) AND kind = sqlc.arg(kind)
+RETURNING to_id;
+
+-- name: ListLinkTargets :many
+SELECT to_id FROM content_link WHERE from_id = sqlc.arg(from_id) AND kind = sqlc.arg(kind) ORDER BY position, to_id;
 
 -- name: InsertLinks :exec
 INSERT INTO content_link (from_id, kind, to_id, position)

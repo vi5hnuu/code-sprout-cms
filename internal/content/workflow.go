@@ -441,20 +441,14 @@ func (s *Service) publishLocked(ctx context.Context, tx pgx.Tx, q *contentdb.Que
 	if err := replaceTags(ctx, q, c.ID, meta.TagIDs, listedAt); err != nil {
 		return err
 	}
-	if err := q.DeleteLinksOfKind(ctx, contentdb.DeleteLinksOfKindParams{FromID: c.ID, Kind: "PRACTICE"}); err != nil {
-		return err
-	}
-	if err := q.InsertLinks(ctx, contentdb.InsertLinksParams{FromID: c.ID, Kind: "PRACTICE", ToIds: plan.problemIDs}); err != nil {
+	if _, err := SetLinks(ctx, tx, c.ID, "PRACTICE", plan.problemIDs); err != nil {
 		return err
 	}
 	related, err := relatedIDs(ctx, q, c.ID, Type(c.Type), meta.TagIDs)
 	if err != nil {
 		return err
 	}
-	if err := q.DeleteLinksOfKind(ctx, contentdb.DeleteLinksOfKindParams{FromID: c.ID, Kind: "RELATED"}); err != nil {
-		return err
-	}
-	if err := q.InsertLinks(ctx, contentdb.InsertLinksParams{FromID: c.ID, Kind: "RELATED", ToIds: related}); err != nil {
+	if _, err := SetLinks(ctx, tx, c.ID, "RELATED", related); err != nil {
 		return err
 	}
 	if err := writeTypeFields(ctx, q, c.ID, meta); err != nil {

@@ -55,7 +55,7 @@ func (s *Service) LinkVideoByTitle(ctx context.Context, tx pgx.Tx, videoID int64
 		if linked[id] {
 			continue
 		}
-		if err := content.SetLinks(ctx, tx, id, "VIDEO", []int64{videoID}); err != nil {
+		if _, err := content.SetLinks(ctx, tx, id, "VIDEO", []int64{videoID}); err != nil {
 			return nil, err
 		}
 		if err := content.Touched(ctx, tx, id); err != nil {
