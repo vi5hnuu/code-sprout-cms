@@ -110,6 +110,17 @@ func ClientIPFrom(trustedHeader, proxySecret string) ClientIP {
 	}
 }
 
+// addressKey is the bucket for a client address. An IPv6 client is usually handed a whole /64
+// and can rotate through it freely, so IPv6 addresses share one bucket per /64; IPv4 addresses
+// are keyed as they are.
+func addressKey(ip string) string {
+	parsed := net.ParseIP(ip)
+	if parsed == nil || parsed.To4() != nil {
+		return ip
+	}
+	return parsed.Mask(net.CIDRMask(64, 128)).String() + "/64"
+}
+
 // Middleware limits by user id when signed in, else by IP. `name` namespaces the bucket so
 // different endpoints (e.g. comments vs code runs) have independent limits. Unattributed server
 // traffic (page renders by the web server, ClientIP "") is not limited per address: it stands
@@ -124,7 +135,7 @@ func (l *Limiter) Middleware(name string, lim Limit, clientIP ClientIP) httpx.Mi
 			if p, ok := auth.FromContext(r.Context()); ok {
 				key = name + ":u:" + strconv.FormatInt(p.UserID, 10)
 			} else if ip := clientIP(r); ip != "" {
-				key = name + ":ip:" + ip
+				key = name + ":ip:" + addressKey(ip)
 			} else {
 				next.ServeHTTP(w, r)
 				return

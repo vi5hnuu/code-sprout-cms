@@ -16,14 +16,11 @@ func CORS(allowedOrigins []string) Middleware {
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			origin := r.Header.Get("Origin")
-			if origin == "" {
-				next.ServeHTTP(w, r)
-				return
-			}
-			// Responses differ by Origin, so shared caches (CDN) must key on it.
+			// Responses differ by Origin, so shared caches (CDN) must key on it, also for requests
+			// without one: otherwise a cached copy without CORS headers is served to browsers.
 			w.Header().Add("Vary", "Origin")
-			if !slices.Contains(allowedOrigins, origin) {
+			origin := r.Header.Get("Origin")
+			if origin == "" || !slices.Contains(allowedOrigins, origin) {
 				next.ServeHTTP(w, r)
 				return
 			}

@@ -12,6 +12,7 @@ import (
 
 	"code-sprout-cms/internal/judge"
 	"code-sprout-cms/internal/platform/db"
+	"code-sprout-cms/internal/platform/text"
 	"code-sprout-cms/internal/problem"
 	"code-sprout-cms/internal/submission/submissiondb"
 )
@@ -212,7 +213,7 @@ func aggregate(jobs []judge.JobResult, spans []judge.Span, total, samples int) o
 		if j.Compile != nil {
 			ce := outcome{verdict: judge.VerdictCE, total: total}
 			if j.Compile.Stderr != nil {
-				msg := truncate(*j.Compile.Stderr, 4000)
+				msg := text.Clip(*j.Compile.Stderr, 4000)
 				ce.message = &msg
 			}
 			return ce
@@ -235,7 +236,7 @@ func aggregate(jobs []judge.JobResult, spans []judge.Span, total, samples int) o
 					out.failedIndex = &i
 				}
 				if c.Verdict == judge.VerdictCE && c.Stderr != nil {
-					msg := truncate(*c.Stderr, 4000)
+					msg := text.Clip(*c.Stderr, 4000)
 					out.message = &msg
 				}
 			}
@@ -319,13 +320,6 @@ func (s *Service) loadCases(ctx context.Context, ref problem.TestSetRef) ([]judg
 		cases, _, err := problem.ReadTestSet(r, true)
 		return cases, err
 	})
-}
-
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n]
 }
 
 func ptrTime(t time.Time) *time.Time { return &t }

@@ -10,6 +10,7 @@ import (
 
 	"code-sprout-cms/internal/outbox/outboxdb"
 	"code-sprout-cms/internal/platform/db"
+	"code-sprout-cms/internal/platform/text"
 )
 
 type Event struct {
@@ -84,7 +85,7 @@ func (d *Dispatcher) dispatchBatch(ctx context.Context) (int, error) {
 		}
 		if herr != nil {
 			slog.Warn("outbox event failed", "id", e.ID, "topic", e.Topic, "attempt", e.Attempts+1, "err", herr)
-			msg := truncate(herr.Error(), 2000)
+			msg := text.Clip(herr.Error(), 2000)
 			if err := q.MarkFailed(ctx, outboxdb.MarkFailedParams{
 				CreatedAt: row.CreatedAt, ID: row.ID, LastError: &msg, AvailableAt: time.Now().Add(Backoff(e.Attempts + 1)),
 			}); err != nil {
@@ -119,11 +120,4 @@ func (d *Dispatcher) handle(ctx context.Context, e Event) (err error) {
 func Backoff(attempt int32) time.Duration {
 	d := 5 * time.Second * time.Duration(math.Pow(2, float64(min(attempt-1, 10))))
 	return min(d, time.Hour)
-}
-
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n]
 }

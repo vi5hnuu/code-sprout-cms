@@ -46,7 +46,6 @@ type Config struct {
 	Delivery DeliveryConfig
 }
 
-// SearchConfig points at Meilisearch. Optional: without a URL, search answers 503.
 // YouTubeConfig mirrors channels' uploads as videos (internal/video). Without an API key the
 // sync stays off and everything else works.
 type YouTubeConfig struct {
@@ -58,6 +57,7 @@ type YouTubeConfig struct {
 	DailyQuota        int
 }
 
+// SearchConfig points at Meilisearch. Optional: without a URL, search answers 503.
 type SearchConfig struct {
 	URL    string
 	APIKey string
