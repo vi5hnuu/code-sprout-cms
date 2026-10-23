@@ -47,7 +47,7 @@ services:
       postgres
         -c shared_preload_libraries=pg_stat_statements
         -c pg_stat_statements.track=all
-        -c max_connections=200
+        -c max_connections=300
     volumes: ["/var/lib/code-sprout-cms/postgres:/var/lib/postgresql/data"]
     ports: ["127.0.0.1:${POSTGRES_PORT:-5442}:5432"]
     shm_size: 256m
@@ -121,6 +121,11 @@ services:
     <<: *service
     image: codesprout-cms/worker:latest
     build: { context: ../.., target: worker }
+    # Worker is background-only (outbox dispatcher, video sync, maintenance jobs) and never
+    # faces reader bursts. A smaller pool leaves more Postgres connections for the API
+    # replicas when they scale out.
+    environment:
+      DATABASE_MAX_CONNS: "15"
     extra_hosts: ["host.docker.internal:host-gateway"]
     volumes: ["/var/log/code-sprout-cms/worker:/var/log/code-sprout-cms"]
     mem_limit: 512m
