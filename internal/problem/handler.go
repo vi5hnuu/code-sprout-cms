@@ -28,7 +28,8 @@ func (h *Handler) Routes(mux *http.ServeMux, authed func(http.Handler) http.Hand
 	studio("PUT /v1/studio/problems/{id}/hints", h.putHints)
 	studio("POST /v1/studio/problems/{id}/test-sets", h.addTestSet)
 	studio("POST /v1/studio/problems/{id}/test-sets/{version}/activate", h.activateTestSet)
-	studio("PUT /v1/admin/problem-of-the-day/{date}", h.scheduleOfDay)
+	// Scheduling the problem-of-the-day is an admin surface, not a studio-author one.
+	mux.Handle("PUT /v1/admin/problem-of-the-day/{date}", auth.RequireAdmin(httpx.HandlerFunc(h.scheduleOfDay)))
 
 	mux.Handle("GET /v1/public/problems", httpx.HandlerFunc(h.list))
 	mux.Handle("GET /v1/public/random-problem", httpx.HandlerFunc(h.random))

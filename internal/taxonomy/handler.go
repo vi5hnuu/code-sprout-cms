@@ -28,13 +28,15 @@ func (h *Handler) Routes(mux *http.ServeMux, authed func(http.Handler) http.Hand
 	mux.Handle("GET /v1/public/tags/search", httpx.HandlerFunc(h.searchTags))
 	mux.Handle("GET /v1/public/tags/{kind}/{slug}", httpx.HandlerFunc(h.tag))
 
-	mux.Handle("POST /v1/admin/categories", authed(httpx.HandlerFunc(h.createCategory)))
-	mux.Handle("PATCH /v1/admin/categories/{id}", authed(httpx.HandlerFunc(h.updateCategory)))
-	mux.Handle("POST /v1/admin/categories/{id}/move", authed(httpx.HandlerFunc(h.moveCategory)))
-	mux.Handle("DELETE /v1/admin/categories/{id}", authed(httpx.HandlerFunc(h.deleteCategory)))
-	mux.Handle("POST /v1/admin/tags", authed(httpx.HandlerFunc(h.createTag)))
-	mux.Handle("PATCH /v1/admin/tags/{id}", authed(httpx.HandlerFunc(h.updateTag)))
-	mux.Handle("DELETE /v1/admin/tags/{id}", authed(httpx.HandlerFunc(h.deleteTag)))
+	// Admin surface: role enforced at the mux so the service layer can't be reached without it.
+	// `authed` (RequireUser) alone would let a signed-in reader through; RequireAdmin stops that.
+	mux.Handle("POST /v1/admin/categories", auth.RequireAdmin(httpx.HandlerFunc(h.createCategory)))
+	mux.Handle("PATCH /v1/admin/categories/{id}", auth.RequireAdmin(httpx.HandlerFunc(h.updateCategory)))
+	mux.Handle("POST /v1/admin/categories/{id}/move", auth.RequireAdmin(httpx.HandlerFunc(h.moveCategory)))
+	mux.Handle("DELETE /v1/admin/categories/{id}", auth.RequireAdmin(httpx.HandlerFunc(h.deleteCategory)))
+	mux.Handle("POST /v1/admin/tags", auth.RequireAdmin(httpx.HandlerFunc(h.createTag)))
+	mux.Handle("PATCH /v1/admin/tags/{id}", auth.RequireAdmin(httpx.HandlerFunc(h.updateTag)))
+	mux.Handle("DELETE /v1/admin/tags/{id}", auth.RequireAdmin(httpx.HandlerFunc(h.deleteTag)))
 }
 
 func (h *Handler) roots(w http.ResponseWriter, r *http.Request) error {
