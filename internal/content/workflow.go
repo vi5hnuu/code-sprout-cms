@@ -210,10 +210,15 @@ func (s *Service) Delete(ctx context.Context, p auth.Principal, id int64) error 
 	})
 }
 
-// PublishDue publishes scheduled items whose time has come. Each item is published inside its
-// own savepoint: one that fails (it stopped being publishable since it was scheduled, say an
-// image was quarantined, or its slug now collides) is rolled back alone, drops back to
-// APPROVED and is logged, so it never blocks the rest of the batch or the next run.
+// PublishDue publishes scheduled items whose time has come. Each item is published inside
+// its own savepoint; one that fails is rolled back alone and marked so the next run and the
+// rest of the batch are not blocked.
+//
+// A validation failure (image quarantined, slug collides, body no longer passes
+// publishability) moves the item to CHANGES_REQUESTED so the author sees it needs
+// attention — it will not quietly re-fail the next tick. An internal error (DB flake,
+// judge outage) leaves it in APPROVED, so the next tick retries without surprising the
+// author.
 func (s *Service) PublishDue(ctx context.Context, batch int32) (int, error) {
 	published := 0
 	err := s.db.InTx(ctx, func(tx pgx.Tx) error {
@@ -231,16 +236,18 @@ func (s *Service) PublishDue(ctx context.Context, batch int32) (int, error) {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
+			next := ReviewApproved
 			if e, ok := apperr.As(perr); ok && e.Kind != apperr.KindInternal {
-				slog.Warn("scheduled publish failed", "content", id, "code", e.Code)
+				slog.Warn("scheduled publish failed; marking for author", "content", id, "code", e.Code)
+				next = ReviewChangesRequested
 			} else {
-				slog.Error("scheduled publish failed", "content", id, "err", perr)
+				slog.Error("scheduled publish failed; will retry on next tick", "content", id, "err", perr)
 			}
 			c, err := q.GetContentForUpdate(ctx, id)
 			if err != nil {
 				return err
 			}
-			if err := s.setReview(ctx, tx, q, 0, c, ReviewApproved, nil, "content.schedule_failed"); err != nil {
+			if err := s.setReview(ctx, tx, q, 0, c, next, nil, "content.schedule_failed"); err != nil {
 				return err
 			}
 		}
