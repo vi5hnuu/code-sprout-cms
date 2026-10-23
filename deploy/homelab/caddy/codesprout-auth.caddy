@@ -1,7 +1,0 @@
-# Code Sprout auth — imported inside the site block for AUTH_DOMAIN. Serves the JWKS, the
-# e-mail verification and password reset links.
-encode zstd gzip
-# 4413 = AUTH_PORT in .env
-reverse_proxy 127.0.0.1:4413 {
-    header_up X-Real-IP {client_ip}
-}

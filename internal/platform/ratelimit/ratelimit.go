@@ -110,15 +110,22 @@ func ClientIPFrom(trustedHeader, proxySecret string) ClientIP {
 	}
 }
 
-// addressKey is the bucket for a client address. An IPv6 client is usually handed a whole /64
-// and can rotate through it freely, so IPv6 addresses share one bucket per /64; IPv4 addresses
-// are keyed as they are.
+// addressKey is the bucket for a client address.
+//
+// IPv4 addresses are keyed as-is: one bucket per /32.
+//
+// IPv6 addresses are keyed by their /56 prefix. ISPs commonly allocate a /56 (sometimes a
+// /48) to each residential or SMB customer, so one /56 is a single consumer-of-the-service
+// and belongs in one bucket. Masking narrower (/64, the single LAN subnet) let a determined
+// caller rotate across their /64s to bypass per-bucket limits — /56 closes that gap. The
+// cost is that a shared /56 (hostels, campuses) shares one bucket; raise `MaskV6` here to
+// loosen if that proves a problem in prod.
 func addressKey(ip string) string {
 	parsed := net.ParseIP(ip)
 	if parsed == nil || parsed.To4() != nil {
 		return ip
 	}
-	return parsed.Mask(net.CIDRMask(64, 128)).String() + "/64"
+	return parsed.Mask(net.CIDRMask(56, 128)).String() + "/56"
 }
 
 // Middleware limits by user id when signed in, else by IP. `name` namespaces the bucket so

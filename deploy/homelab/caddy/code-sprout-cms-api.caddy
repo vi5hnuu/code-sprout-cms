@@ -1,0 +1,16 @@
+# Code Sprout CMS Go API — imported inside the site block for code-sprout-api.laxmi.solutions
+# in /etc/caddy/Caddyfile. The API listens on 127.0.0.1:4411 (API_PORT in ./env).
+#
+# Reader traffic from the website does NOT come through this subdomain — the Next.js web
+# proxies to the API over the internal docker network with an INTERNAL_PROXY_SECRET header.
+# This subdomain exists for:
+#   • /readyz and /healthz probes
+#   • native mobile clients that authenticate directly with JWTs from the shared auth
+#   • API consumers that identify with ANDROID_APP_CERT_SHA256 or a service-account token
+#
+# CORS and auth are enforced inside the Go API itself; this snippet just terminates TLS and
+# forwards the reader's address.
+encode zstd gzip
+reverse_proxy 127.0.0.1:4411 {
+    header_up X-Real-IP {client_ip}
+}

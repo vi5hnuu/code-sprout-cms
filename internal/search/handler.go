@@ -31,7 +31,8 @@ func NewHandler(index Index, indexer *Indexer, policy *access.Policy) *Handler {
 
 func (h *Handler) Routes(mux *http.ServeMux, authed func(http.Handler) http.Handler, limit httpx.Middleware) {
 	mux.Handle("GET /v1/public/search", limit(httpx.HandlerFunc(h.search)))
-	mux.Handle("POST /v1/admin/search/reindex", authed(httpx.HandlerFunc(h.reindex)))
+	// Reindex is destructive and expensive; admin-only.
+	mux.Handle("POST /v1/admin/search/reindex", auth.RequireAdmin(httpx.HandlerFunc(h.reindex)))
 }
 
 // Search is the one place offset paging is used: the engine ranks by relevance (no stable

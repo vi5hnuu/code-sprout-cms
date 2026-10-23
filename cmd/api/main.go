@@ -84,6 +84,25 @@ func run() error {
 	limiter := ratelimit.New(rdb)
 	clientIP := ratelimit.ClientIPFrom(cfg.TrustedClientIPHeader, cfg.InternalProxySecret)
 
+	// Rate-limit bucket names, kept as a typed set so a typo at a call site is a
+	// compile-time error (unknown identifier) rather than silently routing traffic
+	// into an unlimited bucket. Keep each name short; the limiter prefixes keys
+	// with it in Redis.
+	type bucket string
+	const (
+		bucketGlobal      bucket = "global"
+		bucketUploads     bucket = "uploads"
+		bucketActions     bucket = "actions"
+		bucketComments    bucket = "comments"
+		bucketEvents      bucket = "events"
+		bucketSearch      bucket = "search"
+		bucketRuns        bucket = "runs"
+		bucketSubmissions bucket = "submissions"
+	)
+	rl := func(name bucket, limit ratelimit.Limit) httpx.Middleware {
+		return limiter.Middleware(string(name), limit, clientIP)
+	}
+
 	api := http.NewServeMux()
 	user.NewHandler(users).Routes(api, auth.RequireUser)
 	account.NewHandler(account.NewService(database, users.Forget,
@@ -91,13 +110,13 @@ func run() error {
 	)).Routes(api, auth.RequireUser)
 	taxonomy.NewHandler(taxonomies).Routes(api, auth.RequireUser)
 	asset.NewHandler(assets).Routes(api, auth.RequireUser,
-		limiter.Middleware("uploads", ratelimit.PerMinute(30, 10), clientIP))
+		rl(bucketUploads, ratelimit.PerMinute(30, 10)))
 	content.NewHandler(contents).Routes(api, auth.RequireUser)
 	content.NewPublicHandler(reader).Routes(api)
 	engagement.NewHandler(engagements, clientIP).Routes(api, auth.RequireUser, engagement.Limits{
-		Actions:  limiter.Middleware("actions", ratelimit.PerMinute(120, 30), clientIP),
-		Comments: limiter.Middleware("comments", ratelimit.PerMinute(10, 3), clientIP),
-		Events:   limiter.Middleware("events", ratelimit.PerMinute(120, 30), clientIP),
+		Actions:  rl(bucketActions, ratelimit.PerMinute(120, 30)),
+		Comments: rl(bucketComments, ratelimit.PerMinute(10, 3)),
+		Events:   rl(bucketEvents, ratelimit.PerMinute(120, 30)),
 	})
 	library.NewHandler(engagements, reader).Routes(api, auth.RequireUser)
 	library.NewNotes(database, reader).Routes(api, auth.RequireUser)
@@ -112,13 +131,13 @@ func run() error {
 		return outbox.Publish(ctx, database.Primary, topic, id, payload)
 	}
 	search.NewHandler(searchIndex, search.NewIndexer(searchIndex, reader, problems, enqueue), policy).Routes(api, auth.RequireUser,
-		limiter.Middleware("search", ratelimit.PerMinute(60, 20), clientIP))
+		rl(bucketSearch, ratelimit.PerMinute(60, 20)))
 	problem.NewHandler(problems).Routes(api, auth.RequireUser)
 	video.NewHandler(video.NewService(database, reader)).Routes(api)
 	submissions := submission.NewService(database, rdb, judge.New(cfg.Judge.URL, cfg.Judge.APIKey, cfg.Judge.Runtimes), problems, problems, reader)
 	submission.NewHandler(submissions, clientIP).Routes(api, auth.RequireUser, submission.Limits{
-		Runs:        limiter.Middleware("runs", ratelimit.PerMinute(20, 5), clientIP),
-		Submissions: limiter.Middleware("submissions", ratelimit.PerMinute(10, 3), clientIP),
+		Runs:        rl(bucketRuns, ratelimit.PerMinute(20, 5)),
+		Submissions: rl(bucketSubmissions, ratelimit.PerMinute(10, 3)),
 	})
 	// Unmatched paths answer in the same problem+json shape as every other error.
 	api.Handle("/", httpx.HandlerFunc(func(http.ResponseWriter, *http.Request) error {
@@ -142,7 +161,7 @@ func run() error {
 		httpx.CORS(cfg.CORSOrigins),
 		auth.Authenticate(verifier, users),
 		// Global ceiling per user/IP; individual routes add tighter, purpose-specific limits.
-		limiter.Middleware("global", ratelimit.PerMinute(600, 100), clientIP),
+		rl(bucketGlobal, ratelimit.PerMinute(600, 100)),
 	)
 
 	// Health probes bypass the API middleware: a load balancer polling every few seconds from

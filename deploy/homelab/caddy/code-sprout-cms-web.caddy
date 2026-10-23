@@ -1,0 +1,12 @@
+# Code Sprout CMS web — imported inside the site block for code-sprout.laxmi.solutions
+# in /etc/caddy/Caddyfile. The Next.js server listens on 127.0.0.1:4410 (WEB_PORT in ./env).
+#
+# The web server proxies reader API traffic (/api/cms/*) upstream to the Go CMS API with
+# an INTERNAL_PROXY_SECRET header, so the API is not reached from the public internet
+# through this snippet.
+encode zstd gzip
+reverse_proxy 127.0.0.1:4410 {
+    # The reader's address, for rate limits and view counts (CLIENT_IP_HEADER=x-real-ip
+    # in the web container). {client_ip} honours Caddy's global trusted_proxies setting.
+    header_up X-Real-IP {client_ip}
+}

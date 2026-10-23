@@ -53,8 +53,9 @@ func (h *Handler) Routes(mux *http.ServeMux, authed func(http.Handler) http.Hand
 	mux.Handle("POST /v1/public/events/view", l.Events(httpx.HandlerFunc(h.view)))
 	mux.Handle("POST /v1/public/events/share", l.Events(httpx.HandlerFunc(h.share)))
 
-	mux.Handle("GET /v1/admin/comment-reports", authed(httpx.HandlerFunc(h.reports)))
-	mux.Handle("POST /v1/admin/comments/{contentId}/{commentId}/moderate", authed(httpx.HandlerFunc(h.moderate)))
+	// Moderation surface: admin-only, not every signed-in reader.
+	mux.Handle("GET /v1/admin/comment-reports", auth.RequireAdmin(httpx.HandlerFunc(h.reports)))
+	mux.Handle("POST /v1/admin/comments/{contentId}/{commentId}/moderate", auth.RequireAdmin(httpx.HandlerFunc(h.moderate)))
 }
 
 func principal(r *http.Request) auth.Principal {

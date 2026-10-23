@@ -95,11 +95,12 @@ func TestMiddlewareSkipsUnattributedServerTraffic(t *testing.T) {
 	}
 }
 
-func TestAddressKeyGroupsIPv6By64(t *testing.T) {
+func TestAddressKeyGroupsIPv6By56(t *testing.T) {
 	cases := map[string]string{
 		"203.0.113.7":          "203.0.113.7",
-		"2001:db8:1:2:aaaa::1": "2001:db8:1:2::/64",
-		"2001:db8:1:2:ffff::9": "2001:db8:1:2::/64",
+		"2001:db8:1:2:aaaa::1": "2001:db8:1::/56",
+		"2001:db8:1:2:ffff::9": "2001:db8:1::/56",
+		"2001:db8:1:ff00::1":   "2001:db8:1:ff00::/56",
 		"::ffff:203.0.113.7":   "::ffff:203.0.113.7",
 		"not-an-address":       "not-an-address",
 	}

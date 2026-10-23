@@ -56,9 +56,10 @@ func NewHandler(grants *access.Grants, users Users, categories Categories) *Hand
 }
 
 func (h *Handler) Routes(mux *http.ServeMux, authed func(http.Handler) http.Handler) {
-	mux.Handle("GET /v1/admin/roles", authed(httpx.HandlerFunc(h.list)))
-	mux.Handle("POST /v1/admin/roles", authed(httpx.HandlerFunc(h.grant)))
-	mux.Handle("DELETE /v1/admin/roles/{id}", authed(httpx.HandlerFunc(h.revoke)))
+	// Role grants are the keys to every other admin surface — gate them with RequireAdmin.
+	mux.Handle("GET /v1/admin/roles", auth.RequireAdmin(httpx.HandlerFunc(h.list)))
+	mux.Handle("POST /v1/admin/roles", auth.RequireAdmin(httpx.HandlerFunc(h.grant)))
+	mux.Handle("DELETE /v1/admin/roles/{id}", auth.RequireAdmin(httpx.HandlerFunc(h.revoke)))
 }
 
 func principal(r *http.Request) auth.Principal {

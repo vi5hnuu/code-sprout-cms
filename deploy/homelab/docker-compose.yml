@@ -1,22 +1,30 @@
 # ─────────────────────────────────────────────────────────────────────────────
-#  Code Sprout on one Linux host: web, API, worker, auth and every backing service.
+#  Code Sprout CMS on a shared homelab host.
 #
-#  First run (from this directory):
-#    cp .env.example .env      # fill in every CHANGE_ME (each says how to generate it)
-#    ./setup.sh                # data folders, auth signing key, storage config
-#    ./deploy.sh               # build, migrate, start; prints what is healthy
-#  Then import the Caddy snippets in ./caddy into the host's Caddyfile (setup.sh prints the
-#  lines) and reload Caddy. Updates: pull the repositories, run ./deploy.sh again.
+#  Convention (matches ls-judge, pdf-studio, chat-craft, silent-whisper on this host):
+#    env  →  /etc/code-sprout-cms/prod.env     (secrets, 0600, root:root; env_file only)
+#    data →  /var/lib/code-sprout-cms/<store>  (postgres, redis, meili)
+#    logs →  /var/log/code-sprout-cms/         (bind mounts)
+#    net  →  per-service bridge network
+#    ports → 127.0.0.1 only; the host Caddy terminates TLS and reverse-proxies
 #
-#  Data: every byte of state lives under ${DATA_DIR} on the host (bind mounts, no named
-#  volumes), so `docker compose down` (even with -v), image upgrades and container rebuilds
-#  never lose anything. Back it up with ./backup.sh (cron or a systemd timer).
+#  Secrets flow through env_file (never compose-time ${substitution}): the setup script
+#  renders /etc/code-sprout-cms/prod.env with every value fully resolved. Only operator-
+#  facing knobs (ports, build args, domains) are read from ./env at compose time.
 #
-#  Network: only the host's loopback is published (web, media, auth, and the API for the web
-#  image build); the host's Caddy terminates TLS and proxies to them. Databases, Redis and
-#  search are reachable only inside this stack.
+#  Auth: shared ls-judge-auth service (systemd on the host, 127.0.0.1:8081). This stack
+#  does NOT run its own auth jar or auth-db. Add `code-sprout-cms` to the shared auth's
+#  AUTH_JWT_ALLOWED_AUDIENCES so JWTs minted for this product verify here.
+#
+#  Media: AWS S3 directly. The public bucket (images, videos) is fronted by an AWS
+#  CloudFront distribution; the private bucket (test sets, checkers, archived revisions)
+#  is accessed only via presigned URLs. No SeaweedFS is run on this host.
+#
+#  First run:
+#    sudo ./setup.sh                       # dirs, env; prints the remaining manual steps
+#    ./deploy.sh                           # build, migrate, start
 # ─────────────────────────────────────────────────────────────────────────────
-name: codesprout
+name: code-sprout-cms
 
 x-logging: &logging
   logging:
@@ -25,6 +33,8 @@ x-logging: &logging
 
 x-service: &service
   restart: unless-stopped
+  env_file: [/etc/code-sprout-cms/prod.env]
+  networks: [code-sprout-cms-network]
   <<: *logging
 
 services:
@@ -32,16 +42,14 @@ services:
   postgres:
     <<: *service
     image: postgres:17-alpine
-    environment:
-      POSTGRES_USER: sprout
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
-      POSTGRES_DB: sprout
+    # POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB come from env_file.
     command: >
       postgres
         -c shared_preload_libraries=pg_stat_statements
         -c pg_stat_statements.track=all
-        -c max_connections=200
-    volumes: ["${DATA_DIR:-/srv/codesprout}/postgres:/var/lib/postgresql/data"]
+        -c max_connections=300
+    volumes: ["/var/lib/code-sprout-cms/postgres:/var/lib/postgresql/data"]
+    ports: ["127.0.0.1:${POSTGRES_PORT:-5442}:5432"]
     shm_size: 256m
     mem_limit: 1g
     healthcheck:
@@ -53,59 +61,28 @@ services:
   redis:
     <<: *service
     image: redis:7.4-alpine
-    # Append-only file: counters buffered between flushes survive a restart.
-    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?set in .env}"]
-    volumes: ["${DATA_DIR:-/srv/codesprout}/redis:/data"]
+    # Append-only file: counters buffered between flushes survive a restart. The shell form
+    # lets the container expand $REDIS_PASSWORD at runtime from env_file (compose would need
+    # the value at interpolation time, which contradicts "secrets live only in prod.env").
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
+    volumes: ["/var/lib/code-sprout-cms/redis:/data"]
+    ports: ["127.0.0.1:${REDIS_PORT:-6389}:6379"]
     mem_limit: 256m
     healthcheck:
       test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
       interval: 5s
       timeout: 3s
       retries: 30
-    environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
-
-  # S3-compatible object storage for images, videos and test sets. Browsers upload to it with
-  # presigned URLs and read the public bucket through ${MEDIA_DOMAIN} (host Caddy).
-  seaweedfs:
-    <<: *service
-    image: chrislusf/seaweedfs:3.80
-    command: ["server", "-ip=seaweedfs", "-ip.bind=0.0.0.0", "-dir=/data", "-s3", "-s3.config=/etc/seaweedfs/s3.json"]
-    volumes:
-      - "${DATA_DIR:-/srv/codesprout}/seaweedfs:/data"
-      - "${DATA_DIR:-/srv/codesprout}/config/seaweedfs-s3.json:/etc/seaweedfs/s3.json:ro"
-    ports: ["127.0.0.1:${MEDIA_PORT:-4412}:8333"]
-    mem_limit: 512m
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:9333/cluster/status && wget -q -S -O /dev/null http://127.0.0.1:8333/ 2>&1 | grep -q 'HTTP/'"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 10s
-
-  # One-shot: the two buckets the API uses. Safe to re-run (existing buckets are kept).
-  storage-init:
-    <<: *logging
-    image: chrislusf/seaweedfs:3.80
-    entrypoint: ["sh", "-c"]
-    command:
-      - |
-        for b in sprout-public sprout-private; do
-          echo "s3.bucket.create -name $$b" | weed shell -master=seaweedfs:9333 -filer=seaweedfs:8888 2>&1 | grep -v -i "already exist" || true
-        done
-        echo "s3.bucket.list" | weed shell -master=seaweedfs:9333 -filer=seaweedfs:8888 | grep -q sprout-private
-    depends_on:
-      seaweedfs: { condition: service_healthy }
-    restart: "no"
 
   meilisearch:
     <<: *service
     image: getmeili/meilisearch:v1.11
+    # MEILI_MASTER_KEY comes from env_file; MEILI_ENV / MEILI_NO_ANALYTICS are static.
     environment:
       MEILI_ENV: production
-      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:?set in .env}
       MEILI_NO_ANALYTICS: "true"
-    volumes: ["${DATA_DIR:-/srv/codesprout}/meili:/meili_data"]
+    volumes: ["/var/lib/code-sprout-cms/meili:/meili_data"]
+    ports: ["127.0.0.1:${SEARCH_PORT:-7710}:7700"]
     mem_limit: 1g
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://127.0.0.1:7700/health || wget -q -O /dev/null http://127.0.0.1:7700/health"]
@@ -113,160 +90,78 @@ services:
       timeout: 5s
       retries: 30
 
-  # ── auth: a dedicated instance (its own users, database and signing key) ───
-  auth-db:
-    <<: *service
-    image: mysql:8.4
-    environment:
-      MYSQL_DATABASE: auth_db
-      MYSQL_USER: auth
-      MYSQL_PASSWORD: ${AUTH_DB_PASSWORD:?set in .env}
-      MYSQL_ROOT_PASSWORD: ${AUTH_DB_ROOT_PASSWORD:?set in .env}
-    volumes: ["${DATA_DIR:-/srv/codesprout}/mysql:/var/lib/mysql"]
-    mem_limit: 768m
-    healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 30s
-
-  auth:
-    <<: *service
-    image: codesprout/auth:latest
-    # Built unchanged from the auth repository (its own Dockerfile).
-    build: { context: "${AUTH_REPO:?set in .env}" }
-    environment:
-      SPRING_PROFILES_ACTIVE: prod
-      SERVER_PORT: "8081"
-      JAVA_OPTS: ${AUTH_JAVA_OPTS:--Xmx512m}
-      DB_URL: jdbc:mysql://auth-db:3306/auth_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
-      DB_USERNAME: auth
-      DB_PASSWORD: ${AUTH_DB_PASSWORD}
-      JPA_DDL_AUTO: update
-      AUTH_JWT_ISSUER: ${PUBLIC_SCHEME:-https}://${AUTH_DOMAIN:?set in .env}
-      AUTH_JWT_KID: codesprout-key-1
-      AUTH_JWT_PRIVATE_KEY_LOCATION: file:/app/keys/private.pem
-      AUTH_JWT_PUBLIC_KEY_LOCATION: file:/app/keys/public.pem
-      AUTH_JWT_ALLOWED_AUDIENCES: code-sprout-cms
-      AUTH_JWT_DEFAULT_AUDIENCE: code-sprout-cms
-      AUTH_CORS_ALLOWED_ORIGINS: ${PUBLIC_SCHEME:-https}://${SITE_DOMAIN}
-      AUTH_GOOGLE_CLIENT_IDS: ${GOOGLE_CLIENT_ID:-}
-      AUTH_VERIFY_BASE_URL: ${PUBLIC_SCHEME:-https}://${AUTH_DOMAIN}/api/v1/auth/verify
-      AUTH_RESET_BASE_URL: ${PUBLIC_SCHEME:-https}://${AUTH_DOMAIN}/api/v1/auth/reset-password
-      AUTH_MAIL_FROM: ${AUTH_MAIL_FROM:-no-reply@laxmi.solutions}
-      AWS_SES_REGION: ${AWS_SES_REGION:-ap-south-1}
-      AWS_ACCESS_KEY_ID: ${AWS_SES_ACCESS_KEY_ID:-}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SES_SECRET_ACCESS_KEY:-}
-      MAIL_DISPATCHER_ENABLED: ${AUTH_MAIL_ENABLED:-true}
-    volumes: ["${DATA_DIR:-/srv/codesprout}/auth/keys:/app/keys:ro"]
-    ports: ["127.0.0.1:${AUTH_PORT:-4413}:8081"]
-    mem_limit: 768m
-    depends_on:
-      auth-db: { condition: service_healthy }
-    healthcheck:
-      # The JRE image has wget but no curl (as in the auth repository's own compose file).
-      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:8081/actuator/health | grep -q UP"]
-      interval: 15s
-      timeout: 5s
-      retries: 10
-      start_period: 60s
-
-  # ── Code Sprout ────────────────────────────────────────────────────────────
+  # ── Code Sprout CMS ────────────────────────────────────────────────────────
   # One-shot: applies pending database migrations, then exits. Runs on every deploy.
   migrate:
     <<: *logging
-    image: codesprout/migrate:latest
+    image: codesprout-cms/migrate:latest
     build: { context: ../.., target: migrate }
-    environment:
-      GOOSE_DBSTRING: postgres://sprout:${POSTGRES_PASSWORD}@postgres:5432/sprout?sslmode=disable
+    env_file: [/etc/code-sprout-cms/prod.env]  # GOOSE_DBSTRING lives here, pre-resolved.
     depends_on:
       postgres: { condition: service_healthy }
+    networks: [code-sprout-cms-network]
     restart: "no"
 
   api:
     <<: *service
-    image: codesprout/api:latest
+    image: codesprout-cms/api:latest
     build: { context: ../.., target: api }
-    environment: &cms-env
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      DATABASE_URL: postgres://sprout:${POSTGRES_PASSWORD}@postgres:5432/sprout?sslmode=disable
-      DATABASE_MAX_CONNS: "40"
-      REDIS_ADDR: redis:6379
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
-      AUTH_JWKS_URL: http://auth:8081/.well-known/jwks.json
-      AUTH_ISSUER: ${PUBLIC_SCHEME:-https}://${AUTH_DOMAIN}
-      AUTH_AUDIENCE: code-sprout-cms
-      # The API is only reached by the web server, which relays the reader's address with
-      # this shared secret (X-Internal-Proxy); no client header is trusted on its own.
-      INTERNAL_PROXY_SECRET: ${INTERNAL_PROXY_SECRET:?set in .env}
-      CORS_ORIGINS: ${PUBLIC_SCHEME:-https}://${SITE_DOMAIN:?set in .env}
-      STORAGE_ENDPOINT: http://seaweedfs:8333
-      STORAGE_PUBLIC_ENDPOINT: ${PUBLIC_SCHEME:-https}://${MEDIA_DOMAIN:?set in .env}
-      STORAGE_REGION: us-east-1
-      STORAGE_ACCESS_KEY: ${STORAGE_ACCESS_KEY:?set in .env}
-      STORAGE_SECRET_KEY: ${STORAGE_SECRET_KEY:?set in .env}
-      STORAGE_PUBLIC_BUCKET: sprout-public
-      STORAGE_PRIVATE_BUCKET: sprout-private
-      STORAGE_PUBLIC_BASE_URL: ${PUBLIC_SCHEME:-https}://${MEDIA_DOMAIN}/sprout-public
-      SEARCH_URL: http://meilisearch:7700
-      SEARCH_API_KEY: ${MEILI_MASTER_KEY}
-      JUDGE_URL: ${JUDGE_URL:-}
-      JUDGE_API_KEY: ${JUDGE_API_KEY:-}
-      SITE_URL: ${PUBLIC_SCHEME:-https}://${SITE_DOMAIN}
-      WEB_REVALIDATE_URL: http://web:4410/api/revalidate
-      WEB_REVALIDATE_SECRET: ${REVALIDATE_SECRET:?set in .env}
-      INDEXNOW_KEY: ${INDEXNOW_KEY:-}
-      CLOUDFLARE_ZONE_ID: ${CLOUDFLARE_ZONE_ID:-}
-      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-}
-      YOUTUBE_API_KEY: ${YOUTUBE_API_KEY:-}
-      YOUTUBE_CHANNEL_IDS: ${YOUTUBE_CHANNEL_IDS:-}
-      YOUTUBE_OWNER_HANDLE: ${YOUTUBE_OWNER_HANDLE:-}
     # Published on loopback for the web image build, which prerenders pages from the API.
     ports: ["127.0.0.1:${API_PORT:-4411}:9300"]
     mem_limit: 512m
+    # The shared auth service runs as systemd on the host; reach it via the host gateway.
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes: ["/var/log/code-sprout-cms/api:/var/log/code-sprout-cms"]
     depends_on: &cms-deps
       migrate: { condition: service_completed_successfully }
-      storage-init: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
       meilisearch: { condition: service_healthy }
-      auth: { condition: service_healthy }
 
   worker:
     <<: *service
-    image: codesprout/worker:latest
+    image: codesprout-cms/worker:latest
     build: { context: ../.., target: worker }
-    environment: *cms-env
+    # Worker is background-only (outbox dispatcher, video sync, maintenance jobs) and never
+    # faces reader bursts. A smaller pool leaves more Postgres connections for the API
+    # replicas when they scale out.
+    environment:
+      DATABASE_MAX_CONNS: "15"
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes: ["/var/log/code-sprout-cms/worker:/var/log/code-sprout-cms"]
     mem_limit: 512m
     depends_on: *cms-deps
 
   web:
     <<: *service
-    image: codesprout/web:latest
+    image: codesprout-cms/web:latest
     build:
-      context: "${WEB_REPO:?set in .env}"
+      context: "${WEB_REPO:?set WEB_REPO in ./env}"
       dockerfile: apps/code-sprout-cms/Dockerfile
       # Static pages are prerendered from the running API (see deploy.sh for the order).
       network: host
       args:
         CMS_API_URL: ${WEB_BUILD_API_URL:-http://127.0.0.1:4411}
-        NEXT_PUBLIC_SITE_URL: ${PUBLIC_SCHEME:-https}://${SITE_DOMAIN}
+        NEXT_PUBLIC_SITE_URL: ${PUBLIC_SCHEME:-https}://${SITE_DOMAIN:?set SITE_DOMAIN in ./env}
         NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
         NEXT_PUBLIC_YOUTUBE_CHANNEL_URL: ${YOUTUBE_CHANNEL_URL:-}
-        STORAGE_MEDIA_URL: ${PUBLIC_SCHEME:-https}://${MEDIA_DOMAIN}
-        STORAGE_UPLOAD_URL: ${PUBLIC_SCHEME:-https}://${MEDIA_DOMAIN}
+        STORAGE_MEDIA_URL: ${PUBLIC_SCHEME:-https}://${MEDIA_DOMAIN:?set MEDIA_DOMAIN in ./env}
+        STORAGE_UPLOAD_URL: ${STORAGE_UPLOAD_ORIGIN:-https://s3.ap-south-1.amazonaws.com}
+    # The web container needs a few extras on top of prod.env (operator-facing + static
+    # inter-container URLs). Secrets (REVALIDATE_SECRET, INTERNAL_PROXY_SECRET) come from
+    # prod.env via env_file above.
     environment:
       CMS_API_URL: http://api:9300
-      AUTH_URL: http://auth:8081
+      AUTH_URL: http://host.docker.internal:8081
       AUTH_AUDIENCE: code-sprout-cms
-      REVALIDATE_SECRET: ${REVALIDATE_SECRET}
-      INTERNAL_PROXY_SECRET: ${INTERNAL_PROXY_SECRET}
-      INDEXNOW_KEY: ${INDEXNOW_KEY:-}
-      ANDROID_APP_CERT_SHA256: ${ANDROID_APP_CERT_SHA256:-}
-      # The host Caddy sets X-Real-IP to the reader's address (see caddy/codesprout-web.caddy).
       CLIENT_IP_HEADER: x-real-ip
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-true}
     ports: ["127.0.0.1:${WEB_PORT:-4410}:4410"]
     mem_limit: 768m
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes: ["/var/log/code-sprout-cms/web:/app/logs"]
     depends_on:
       api: { condition: service_healthy }
+
+networks:
+  code-sprout-cms-network:
+    driver: bridge

@@ -83,6 +83,25 @@ func RequireUser(next http.Handler) http.Handler {
 	})
 }
 
+// RequireAdmin rejects requests that are not authenticated with an admin role. A missing
+// Principal is 401 so the client knows to sign in; a non-admin Principal is 403 so the
+// client knows it must not retry. This is wired at the mux layer (not relied on inside
+// handlers alone) so there is no path to the admin surface without the role check.
+func RequireAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p, ok := FromContext(r.Context())
+		if !ok {
+			httpx.Error(w, r, apperr.Unauthenticated("Sign in to continue."))
+			return
+		}
+		if !p.IsAdmin {
+			httpx.Error(w, r, apperr.Forbidden("auth.not_admin", "Admin role required."))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func bearerToken(r *http.Request) (string, bool) {
 	h := r.Header.Get("Authorization")
 	const prefix = "Bearer "
