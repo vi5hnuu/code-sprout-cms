@@ -144,6 +144,7 @@ services:
         NEXT_PUBLIC_SITE_URL: ${PUBLIC_SCHEME:-https}://${SITE_DOMAIN:?set SITE_DOMAIN in ./env}
         NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
         NEXT_PUBLIC_YOUTUBE_CHANNEL_URL: ${YOUTUBE_CHANNEL_URL:-}
+        NEXT_PUBLIC_SCRIBBLEMATE_HOST: ${SCRIBBLEMATE_HOST:-}
         STORAGE_MEDIA_URL: ${PUBLIC_SCHEME:-https}://${MEDIA_DOMAIN:?set MEDIA_DOMAIN in ./env}
         STORAGE_UPLOAD_URL: ${STORAGE_UPLOAD_ORIGIN:-https://s3.ap-south-1.amazonaws.com}
     # The web container needs a few extras on top of prod.env (operator-facing + static
