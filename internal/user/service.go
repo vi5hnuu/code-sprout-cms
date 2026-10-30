@@ -118,9 +118,15 @@ func fallbackDisplayName(name string) string {
 }
 
 // EraseUser anonymises the user's row (account erase), inside the caller's transaction. The row
-// stays because authored pages and audit entries point at it.
+// stays because authored pages and audit entries point at it. Also drops the user_stats
+// counter row — by the time this runs, bookmark / submission erasers have decremented the
+// counters to 0, but the row itself is still keyed by user_id and must go for a clean erase.
 func (s *Service) EraseUser(ctx context.Context, tx pgx.Tx, userID int64) error {
-	return userdb.New(tx).AnonymizeUser(ctx, userID)
+	q := userdb.New(tx)
+	if err := q.DropUserStats(ctx, userID); err != nil {
+		return err
+	}
+	return q.AnonymizeUser(ctx, userID)
 }
 
 // Forget drops a cached subject mapping after an erase, so a later sign-in with the same

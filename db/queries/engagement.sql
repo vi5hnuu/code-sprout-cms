@@ -50,8 +50,11 @@ UPDATE bookmark SET list_id = sqlc.narg(list_id) WHERE user_id = sqlc.arg(user_i
 -- name: DeleteBookmark :execrows
 DELETE FROM bookmark WHERE user_id = $1 AND content_id = $2;
 
+-- Reads from user_stats (migration 00018) — a denormalised counter maintained by the
+-- bookmark_user_stats_sync trigger. O(1) instead of O(rows). COALESCE handles the rare case
+-- of a user whose first-ever bookmark hasn't yet inserted (no row in user_stats yet).
 -- name: CountUserBookmarks :one
-SELECT count(*) FROM bookmark WHERE user_id = $1;
+SELECT COALESCE((SELECT bookmark_count::bigint FROM user_stats WHERE user_id = $1), 0::bigint);
 
 -- name: BookmarkStates :many
 SELECT content_id, list_id FROM bookmark WHERE user_id = sqlc.arg(user_id) AND content_id = ANY (sqlc.arg(ids)::bigint[]);

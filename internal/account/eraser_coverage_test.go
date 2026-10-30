@@ -91,6 +91,7 @@ var expectedCoveredTables = map[string]map[string]string{
 	"user_review":        {"user_id": "internal/library/erase.go"},
 	"user_problem":       {"user_id": "internal/submission/erase.go"},
 	"user_activity_day":  {"user_id": "internal/library/erase.go"},
+	"user_stats":         {"user_id": "cascades via FK ON DELETE CASCADE from app_user, and the bookmark/submission triggers decrement to 0 as the per-table erasers DELETE rows"},
 	"submission":         {"user_id": "internal/submission/erase.go"},
 	"comment":            {"author_id": "internal/engagement/erase.go (anonymises visible, deletes drafts)"},
 	"content":            {"author_id": "stays, re-attributed to 'former-member' at erase time"},

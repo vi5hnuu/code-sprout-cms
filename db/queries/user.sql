@@ -40,3 +40,10 @@ UPDATE app_user
 SET auth_sub = 'erased:' || id, handle = NULL, display_name = 'Former member', bio = NULL,
     avatar_file_id = NULL, deleted_at = now(), updated_at = now()
 WHERE id = $1;
+
+-- Final step of account erase: drop the user_stats row. By the time this runs, bookmark /
+-- submission erasers have already deleted the user's rows and the triggers have decremented
+-- the counters to 0 — the row is cosmetically zero but still linked by user_id, so clear it
+-- out for a clean DPDPA-defensible erasure.
+-- name: DropUserStats :exec
+DELETE FROM user_stats WHERE user_id = $1;

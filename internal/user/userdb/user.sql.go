@@ -24,6 +24,19 @@ func (q *Queries) AnonymizeUser(ctx context.Context, id int64) error {
 	return err
 }
 
+const dropUserStats = `-- name: DropUserStats :exec
+DELETE FROM user_stats WHERE user_id = $1
+`
+
+// Final step of account erase: drop the user_stats row. By the time this runs, bookmark /
+// submission erasers have already deleted the user's rows and the triggers have decremented
+// the counters to 0 — the row is cosmetically zero but still linked by user_id, so clear it
+// out for a clean DPDPA-defensible erasure.
+func (q *Queries) DropUserStats(ctx context.Context, userID int64) error {
+	_, err := q.db.Exec(ctx, dropUserStats, userID)
+	return err
+}
+
 const findUserIDBySub = `-- name: FindUserIDBySub :one
 SELECT id FROM app_user WHERE auth_sub = $1
 `

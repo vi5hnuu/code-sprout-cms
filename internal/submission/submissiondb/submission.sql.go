@@ -105,14 +105,16 @@ func (q *Queries) CountDueReviews(ctx context.Context, userID int64) (int64, err
 }
 
 const countUserSubmissions = `-- name: CountUserSubmissions :one
-SELECT count(*) FROM submission WHERE user_id = $1
+SELECT COALESCE((SELECT submission_count::bigint FROM user_stats WHERE user_id = $1), 0::bigint)
 `
 
+// Reads from user_stats (migration 00018) — a denormalised counter maintained by the
+// submission_user_stats_sync trigger. O(1) instead of a 32-partition fan-out count.
 func (q *Queries) CountUserSubmissions(ctx context.Context, userID int64) (int64, error) {
 	row := q.db.QueryRow(ctx, countUserSubmissions, userID)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
+	var coalesce int64
+	err := row.Scan(&coalesce)
+	return coalesce, err
 }
 
 const deleteUserActivity = `-- name: DeleteUserActivity :exec

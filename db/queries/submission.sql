@@ -79,8 +79,10 @@ LIMIT sqlc.arg(row_limit);
 -- name: SolvedProblemIDs :many
 SELECT problem_id FROM user_problem WHERE user_id = $1 AND first_solved_at IS NOT NULL;
 
+-- Reads from user_stats (migration 00018) — a denormalised counter maintained by the
+-- submission_user_stats_sync trigger. O(1) instead of a 32-partition fan-out count.
 -- name: CountUserSubmissions :one
-SELECT count(*) FROM submission WHERE user_id = $1;
+SELECT COALESCE((SELECT submission_count::bigint FROM user_stats WHERE user_id = $1), 0::bigint);
 
 -- name: ActivitySince :many
 SELECT day, submissions, accepted FROM user_activity_day WHERE user_id = $1 AND day >= $2 ORDER BY day;
