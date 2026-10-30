@@ -323,9 +323,14 @@ func (s *Service) anyRevision(ctx context.Context, q *contentdb.Queries, id int6
 	return r, meta, body, err
 }
 
-// ListMine lists the caller's own items, most recently updated first.
-func (s *Service) ListMine(ctx context.Context, p auth.Principal, req page.Request[ListCursor]) (page.Page[Summary], error) {
+// ListMine lists the caller's own items, most recently updated first. `filterType` keeps only
+// items of that content type when non-empty; "" lists every type.
+func (s *Service) ListMine(ctx context.Context, p auth.Principal, filterType Type, req page.Request[ListCursor]) (page.Page[Summary], error) {
 	params := contentdb.ListAuthorContentParams{AuthorID: p.UserID, RowLimit: int32(req.Limit + 1)}
+	if filterType != "" {
+		t := string(filterType)
+		params.TypeFilter = &t
+	}
 	if req.Key != nil {
 		params.AfterUpdated, params.AfterID = &req.Key.UpdatedAt, &req.Key.ID
 	}

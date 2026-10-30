@@ -627,14 +627,16 @@ const listAuthorContent = `-- name: ListAuthorContent :many
 
 SELECT id, type, locale, slug, title, summary, status, review_state, visibility, access, author_id, primary_category_id, last_rev_no, draft_rev_no, published_rev_no, scheduled_at, published_at, last_published_at, translation_group_id, created_at, updated_at, deleted_at FROM content
 WHERE author_id = $1 AND deleted_at IS NULL
-  AND ($2::timestamptz IS NULL
-       OR (updated_at, id) < ($2::timestamptz, $3::bigint))
+  AND ($2::text IS NULL OR type = $2::text)
+  AND ($3::timestamptz IS NULL
+       OR (updated_at, id) < ($3::timestamptz, $4::bigint))
 ORDER BY updated_at DESC, id DESC
-LIMIT $4
+LIMIT $5
 `
 
 type ListAuthorContentParams struct {
 	AuthorID     int64
+	TypeFilter   *string
 	AfterUpdated *time.Time
 	AfterID      *int64
 	RowLimit     int32
@@ -644,6 +646,7 @@ type ListAuthorContentParams struct {
 func (q *Queries) ListAuthorContent(ctx context.Context, arg ListAuthorContentParams) ([]Content, error) {
 	rows, err := q.db.Query(ctx, listAuthorContent,
 		arg.AuthorID,
+		arg.TypeFilter,
 		arg.AfterUpdated,
 		arg.AfterID,
 		arg.RowLimit,

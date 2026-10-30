@@ -155,6 +155,7 @@ INSERT INTO content_stats (content_id) VALUES ($1) ON CONFLICT DO NOTHING;
 -- name: ListAuthorContent :many
 SELECT * FROM content
 WHERE author_id = sqlc.arg(author_id) AND deleted_at IS NULL
+  AND (sqlc.narg(type_filter)::text IS NULL OR type = sqlc.narg(type_filter)::text)
   AND (sqlc.narg(after_updated)::timestamptz IS NULL
        OR (updated_at, id) < (sqlc.narg(after_updated)::timestamptz, sqlc.narg(after_id)::bigint))
 ORDER BY updated_at DESC, id DESC

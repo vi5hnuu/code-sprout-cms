@@ -99,7 +99,7 @@ func (s *seeder) seedAuthors(ctx context.Context) error {
 func (s *seeder) loadExisting(ctx context.Context, p auth.Principal) error {
 	req := page.Request[content.ListCursor]{Limit: page.MaxLimit}
 	for {
-		pg, err := s.contents.ListMine(ctx, p, req)
+		pg, err := s.contents.ListMine(ctx, p, "", req)
 		if err != nil {
 			return err
 		}

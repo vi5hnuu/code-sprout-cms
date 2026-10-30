@@ -131,7 +131,20 @@ func (h *Handler) listMine(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	res, err := h.svc.ListMine(r.Context(), principal(r), req)
+	// Optional `?type=` filter — validated against the known content types so an unknown value
+	// is a 400 instead of silently returning everything (what the bug was: callers assumed the
+	// filter worked, but the server ignored it).
+	var filter Type
+	if raw := strings.TrimSpace(r.URL.Query().Get("type")); raw != "" {
+		t := Type(strings.ToUpper(raw))
+		switch t {
+		case TypeArticle, TypeBlog, TypeTopicPage, TypeProblem, TypeQuiz, TypeVideo:
+			filter = t
+		default:
+			return apperr.ValidationFailed(map[string]string{"type": "unknown content type"})
+		}
+	}
+	res, err := h.svc.ListMine(r.Context(), principal(r), filter, req)
 	if err != nil {
 		return err
 	}
