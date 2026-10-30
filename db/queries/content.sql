@@ -403,7 +403,7 @@ ORDER BY c.id;
 -- Hub pages (categories, tags with live content, public editorial collections) are chunked by
 -- id range exactly like content. The chunk lists are small aggregates, cached for an hour.
 -- name: ListCategorySitemapChunks :many
-SELECT (id / 50000)::int AS chunk, count(*)::int AS url_count, max(updated_at)::timestamptz AS lastmod
+SELECT (id / 50000)::bigint AS chunk, count(*)::int AS url_count, max(updated_at)::timestamptz AS lastmod
 FROM category GROUP BY 1 ORDER BY 1;
 
 -- A category page changes when the category does or when something is published into it.
@@ -419,7 +419,7 @@ ORDER BY cat.id;
 
 -- Tags without live content are left out: an empty listing is a thin page.
 -- name: ListTagSitemapChunks :many
-SELECT (t.id / 50000)::int AS chunk, count(*)::int AS url_count, max(l.last)::timestamptz AS lastmod
+SELECT (t.id / 50000)::bigint AS chunk, count(*)::int AS url_count, max(l.last)::timestamptz AS lastmod
 FROM tag t
 CROSS JOIN LATERAL (SELECT max(ct.published_at) AS last FROM content_tag ct WHERE ct.tag_id = t.id AND ct.published_at IS NOT NULL) l
 WHERE l.last IS NOT NULL
@@ -433,7 +433,7 @@ WHERE t.id >= sqlc.arg(lo) AND t.id < sqlc.arg(hi) AND l.last IS NOT NULL
 ORDER BY t.id;
 
 -- name: ListCollectionSitemapChunks :many
-SELECT (id / 50000)::int AS chunk, count(*)::int AS url_count, max(updated_at)::timestamptz AS lastmod
+SELECT (id / 50000)::bigint AS chunk, count(*)::int AS url_count, max(updated_at)::timestamptz AS lastmod
 FROM collection WHERE kind <> 'LIST' AND visibility = 'PUBLIC'
 GROUP BY 1 ORDER BY 1;
 
