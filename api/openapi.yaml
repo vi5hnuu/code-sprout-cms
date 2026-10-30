@@ -475,6 +475,11 @@ paths:
       parameters:
         - { $ref: "#/components/parameters/Cursor" }
         - { $ref: "#/components/parameters/Limit" }
+        - in: query
+          name: type
+          required: false
+          description: Keep only items of this type (ARTICLE, BLOG, TOPIC_PAGE, PROBLEM, VIDEO, QUIZ). Omit to list every type.
+          schema: { $ref: "#/components/schemas/ContentType" }
       responses:
         "200":
           description: Page of items
