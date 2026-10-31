@@ -166,6 +166,11 @@ func run() error {
 			return maintenance.PruneOutbox(ctx, database.Primary)
 		})
 	})
+	wg.Go(func() {
+		maintenance.Every(ctx, "audit-log-prune", 24*time.Hour, func(ctx context.Context) error {
+			return maintenance.PruneAuditLog(ctx, database.Primary)
+		})
+	})
 
 	slog.Info("worker started")
 	wg.Wait()

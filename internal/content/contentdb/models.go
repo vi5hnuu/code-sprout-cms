@@ -86,7 +86,7 @@ type ReviewNote struct {
 
 type SitemapChunk struct {
 	Type     string
-	Chunk    int32
+	Chunk    int64
 	UrlCount int32
 	Lastmod  time.Time
 }

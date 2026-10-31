@@ -725,12 +725,12 @@ func (q *Queries) ListBlogCovers(ctx context.Context, ids []int64) ([]ListBlogCo
 }
 
 const listCategorySitemapChunks = `-- name: ListCategorySitemapChunks :many
-SELECT (id / 50000)::int AS chunk, count(*)::int AS url_count, max(updated_at)::timestamptz AS lastmod
+SELECT (id / 50000)::bigint AS chunk, count(*)::int AS url_count, max(updated_at)::timestamptz AS lastmod
 FROM category GROUP BY 1 ORDER BY 1
 `
 
 type ListCategorySitemapChunksRow struct {
-	Chunk    int32
+	Chunk    int64
 	UrlCount int32
 	Lastmod  time.Time
 }
@@ -800,13 +800,13 @@ func (q *Queries) ListCategorySitemapEntries(ctx context.Context, arg ListCatego
 }
 
 const listCollectionSitemapChunks = `-- name: ListCollectionSitemapChunks :many
-SELECT (id / 50000)::int AS chunk, count(*)::int AS url_count, max(updated_at)::timestamptz AS lastmod
+SELECT (id / 50000)::bigint AS chunk, count(*)::int AS url_count, max(updated_at)::timestamptz AS lastmod
 FROM collection WHERE kind <> 'LIST' AND visibility = 'PUBLIC'
 GROUP BY 1 ORDER BY 1
 `
 
 type ListCollectionSitemapChunksRow struct {
-	Chunk    int32
+	Chunk    int64
 	UrlCount int32
 	Lastmod  time.Time
 }
@@ -1773,7 +1773,7 @@ func (q *Queries) ListSitemapEntries(ctx context.Context, arg ListSitemapEntries
 }
 
 const listTagSitemapChunks = `-- name: ListTagSitemapChunks :many
-SELECT (t.id / 50000)::int AS chunk, count(*)::int AS url_count, max(l.last)::timestamptz AS lastmod
+SELECT (t.id / 50000)::bigint AS chunk, count(*)::int AS url_count, max(l.last)::timestamptz AS lastmod
 FROM tag t
 CROSS JOIN LATERAL (SELECT max(ct.published_at) AS last FROM content_tag ct WHERE ct.tag_id = t.id AND ct.published_at IS NOT NULL) l
 WHERE l.last IS NOT NULL
@@ -1781,7 +1781,7 @@ GROUP BY 1 ORDER BY 1
 `
 
 type ListTagSitemapChunksRow struct {
-	Chunk    int32
+	Chunk    int64
 	UrlCount int32
 	Lastmod  time.Time
 }
@@ -2311,7 +2311,7 @@ ON CONFLICT (type, chunk) DO UPDATE SET url_count = EXCLUDED.url_count, lastmod 
 
 type UpsertSitemapChunkParams struct {
 	Type     string
-	Chunk    int32
+	Chunk    int64
 	UrlCount int32
 }
 
