@@ -376,12 +376,17 @@ paths:
       tags: [access]
       operationId: revokeRole
       summary: Revoke a role grant (site-wide ADMIN; ADMIN grants need a site owner).
+      description: |
+        Admins cannot revoke their own grant from this endpoint — a one-click self-lockout
+        would leave the install with no owner. The server answers with `409 role.self_revoke`
+        in that case; another admin or the auth super-user must do it for them.
       security: [{ bearerAuth: [] }]
       responses:
         "204": { description: Revoked }
         "401": { $ref: "#/components/responses/Problem" }
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
 
   /v1/studio/uploads:
     post:

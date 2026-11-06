@@ -134,3 +134,31 @@ func TestGrantingRolesNeedsTheRightAuthority(t *testing.T) {
 		t.Errorf("CMS admin revoking EDITOR: %v", err)
 	}
 }
+
+// An admin cannot revoke their own role from here: a one-click self-lockout is caught by the
+// server, not just the UI, and the refusal rolls the delete back so the grant is still in place.
+func TestAdminCannotRevokeSelf(t *testing.T) {
+	d := testenv.DB(t)
+	ctx := context.Background()
+	grants := access.NewGrants(d, access.NewPolicy(d.Primary))
+	policy := access.NewPolicy(d.Primary)
+	owner := testenv.Admin(t, d)
+
+	cmsAdmin := testenv.User(t, d)
+	selfGrant, err := grants.Add(ctx, owner, cmsAdmin.UserID, access.RoleAdmin, nil)
+	if err != nil {
+		t.Fatalf("seed self grant: %v", err)
+	}
+
+	if err := grants.Remove(ctx, cmsAdmin, selfGrant.ID); code(err) != "role.self_revoke" {
+		t.Errorf("self-revoke: %v, want role.self_revoke", err)
+	}
+	if ok, _ := policy.Has(ctx, cmsAdmin, access.RoleAdmin, nil); !ok {
+		t.Fatal("a refused self-revoke still removed the grant")
+	}
+
+	// Another admin may still revoke them — the guard is per-caller, not per-grant.
+	if err := grants.Remove(ctx, owner, selfGrant.ID); err != nil {
+		t.Errorf("another admin revoking: %v", err)
+	}
+}
