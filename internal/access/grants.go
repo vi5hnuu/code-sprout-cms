@@ -97,6 +97,14 @@ func (g *Grants) Remove(ctx context.Context, p auth.Principal, id int64) error {
 		if err != nil {
 			return err
 		}
+		// Self-revoke guard. An admin dropping their own grant is a one-click lockout — and for
+		// a site-wide ADMIN grant it can leave the install with no owner at all. Another admin
+		// (or the auth super-user) must do it for them. Checked against the deleted row inside
+		// the transaction so a refusal rolls the delete back. Defence in depth: the UI hides the
+		// button, this check is the enforcement.
+		if row.UserID == p.UserID {
+			return apperr.Conflict("role.self_revoke", "You cannot revoke your own role. Another admin has to do it for you.")
+		}
 		// Checked against the deleted row inside the transaction: a refusal rolls it back.
 		if err := g.requireCanChange(ctx, p, Role(row.Role)); err != nil {
 			return err
