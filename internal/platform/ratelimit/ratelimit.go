@@ -65,16 +65,6 @@ func (l *Limiter) Allow(ctx context.Context, key string, lim Limit) (bool, time.
 	return res[0] == 1, time.Duration(res[1]) * time.Microsecond, nil
 }
 
-// ClientIP returns the caller address, or "" for unattributed server traffic. It is Identify
-// reduced to the address; see IdentifyFrom for how the address is established.
-type ClientIP func(r *http.Request) string
-
-// ClientIPFrom builds the client-address resolver (see IdentifyFrom).
-func ClientIPFrom(trustedHeader, proxySecret string) ClientIP {
-	identify := IdentifyFrom(trustedHeader, proxySecret)
-	return func(r *http.Request) string { return identify(r).IP }
-}
-
 const (
 	// InternalProxyHeader carries the shared secret by which the web server proves a request is
 	// its own (server-side rendering, or a reader's call relayed through its /api/cms proxy).
