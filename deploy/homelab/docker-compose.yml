@@ -45,17 +45,19 @@ services:
     # POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB come from env_file.
     # WAL archiving is the step from "daily dump" to point-in-time recovery: with
     # PG_ARCHIVE_MODE=on every finished WAL segment is copied to the archive volume (and a
-    # segment is forced every 5 minutes), so backup.sh's base backup plus the archive can
-    # restore to any moment, not just last night. Off by default: turning it on needs the
-    # archive directory (setup.sh creates it) and a Postgres restart (archive_mode is not
-    # reloadable), so flip it deliberately. See backup.sh for the restore steps.
+    # partly-filled one every PG_ARCHIVE_TIMEOUT seconds, which bounds what a disk loss can
+    # cost), so backup.sh's base backup plus the archive can restore to any moment, not just
+    # last night. Off by default: turning it on needs the archive directory (setup.sh creates
+    # it) and a Postgres restart (archive_mode is not reloadable), so flip it deliberately.
+    # The timeout is a separate knob only because Postgres forces the segment switch whether
+    # or not archiving is on; it belongs at 0 when the mode is off. See backup.sh for restore.
     command: >
       postgres
         -c shared_preload_libraries=pg_stat_statements
         -c pg_stat_statements.track=all
         -c max_connections=300
         -c archive_mode=${PG_ARCHIVE_MODE:-off}
-        -c archive_timeout=300
+        -c archive_timeout=${PG_ARCHIVE_TIMEOUT:-0}
         -c "archive_command=test ! -f /var/lib/postgresql/wal_archive/%f && cp %p /var/lib/postgresql/wal_archive/%f"
     volumes:
       - "/var/lib/code-sprout-cms/postgres:/var/lib/postgresql/data"
