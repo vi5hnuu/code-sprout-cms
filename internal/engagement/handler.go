@@ -15,11 +15,11 @@ import (
 
 type Handler struct {
 	svc      *Service
-	clientIP ratelimit.ClientIP
+	identify ratelimit.Identify
 }
 
-func NewHandler(svc *Service, clientIP ratelimit.ClientIP) *Handler {
-	return &Handler{svc: svc, clientIP: clientIP}
+func NewHandler(svc *Service, identify ratelimit.Identify) *Handler {
+	return &Handler{svc: svc, identify: identify}
 }
 
 // Limits are per-purpose throttles: reacting, commenting and anonymous counting events each
@@ -314,12 +314,13 @@ func (h *Handler) replies(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// viewer is the dedupe identity for counting: the user when signed in, else the client address.
+// viewer is the dedupe identity for counting: the user when signed in, else the reader's
+// anonymous id, else the client address (see ratelimit.Client).
 func (h *Handler) viewer(r *http.Request) string {
 	if p, ok := auth.FromContext(r.Context()); ok {
 		return "u" + strconv.FormatInt(p.UserID, 10)
 	}
-	return "ip" + h.clientIP(r)
+	return h.identify(r).Key()
 }
 
 func (h *Handler) view(w http.ResponseWriter, r *http.Request) error {

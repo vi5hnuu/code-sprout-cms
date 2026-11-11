@@ -82,7 +82,7 @@ func run() error {
 	reader := content.NewReader(database, assets, taxonomies, users, engagement.NewStatsReader(database))
 	engagements := engagement.NewService(database, rdb, reader, users, policy)
 	limiter := ratelimit.New(rdb)
-	clientIP := ratelimit.ClientIPFrom(cfg.TrustedClientIPHeader, cfg.InternalProxySecret)
+	identify := ratelimit.IdentifyFrom(cfg.TrustedClientIPHeader, cfg.InternalProxySecret)
 
 	// Rate-limit bucket names, kept as a typed set so a typo at a call site is a
 	// compile-time error (unknown identifier) rather than silently routing traffic
@@ -100,7 +100,7 @@ func run() error {
 		bucketSubmissions bucket = "submissions"
 	)
 	rl := func(name bucket, limit ratelimit.Limit) httpx.Middleware {
-		return limiter.Middleware(string(name), limit, clientIP)
+		return limiter.Middleware(string(name), limit, identify)
 	}
 
 	api := http.NewServeMux()
@@ -113,7 +113,7 @@ func run() error {
 		rl(bucketUploads, ratelimit.PerMinute(30, 10)))
 	content.NewHandler(contents).Routes(api, auth.RequireUser)
 	content.NewPublicHandler(reader).Routes(api)
-	engagement.NewHandler(engagements, clientIP).Routes(api, auth.RequireUser, engagement.Limits{
+	engagement.NewHandler(engagements, identify).Routes(api, auth.RequireUser, engagement.Limits{
 		Actions:  rl(bucketActions, ratelimit.PerMinute(120, 30)),
 		Comments: rl(bucketComments, ratelimit.PerMinute(10, 3)),
 		Events:   rl(bucketEvents, ratelimit.PerMinute(120, 30)),
@@ -135,7 +135,7 @@ func run() error {
 	problem.NewHandler(problems).Routes(api, auth.RequireUser)
 	video.NewHandler(video.NewService(database, reader)).Routes(api)
 	submissions := submission.NewService(database, rdb, judge.New(cfg.Judge.URL, cfg.Judge.APIKey, cfg.Judge.Runtimes), problems, problems, reader)
-	submission.NewHandler(submissions, clientIP).Routes(api, auth.RequireUser, submission.Limits{
+	submission.NewHandler(submissions, identify).Routes(api, auth.RequireUser, submission.Limits{
 		Runs:        rl(bucketRuns, ratelimit.PerMinute(20, 5)),
 		Submissions: rl(bucketSubmissions, ratelimit.PerMinute(10, 3)),
 	})

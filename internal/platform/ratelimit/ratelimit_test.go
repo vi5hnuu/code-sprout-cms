@@ -81,10 +81,67 @@ func TestClientIPFromInternalProxy(t *testing.T) {
 	}
 }
 
+func TestIdentifyClientIDOnlyFromProvenRequests(t *testing.T) {
+	identify := IdentifyFrom("", "s3cret")
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "10.0.0.9:5000"
+	req.Header.Set(ClientIPHeader, "198.51.100.4")
+	req.Header.Set(ClientIDHeader, "AbCdEfGhIjKlMnOpQrSt")
+
+	if c := identify(req); c.ID != "" || c.Key() != "ip:10.0.0.9" {
+		t.Fatalf("unproven request must not carry an id, got %+v", c)
+	}
+	req.Header.Set(InternalProxyHeader, "s3cret")
+	if c := identify(req); c.IP != "198.51.100.4" || c.ID != "AbCdEfGhIjKlMnOpQrSt" || c.Key() != "c:AbCdEfGhIjKlMnOpQrSt" {
+		t.Fatalf("proven request must carry address and id, got %+v", c)
+	}
+	req.Header.Set(ClientIDHeader, "short")
+	if c := identify(req); c.ID != "" {
+		t.Fatalf("malformed id must be ignored, got %q", c.ID)
+	}
+	req.Header.Set(ClientIDHeader, "AbCdEfGhIjKlMnOpQrSt")
+	req.Header.Del(ClientIPHeader)
+	if c := identify(req); c.ID != "" || c.Key() != "" {
+		t.Fatalf("an id without an address is unattributed, got %+v", c)
+	}
+}
+
+// Readers behind one address (carrier-grade NAT) each get their own budget; the address only
+// caps the crowd as a whole.
+func TestMiddlewareLimitsPerClientIDBehindOneAddress(t *testing.T) {
+	l := New(testenv.Redis(t))
+	name := fmt.Sprintf("test-cgnat-%d", time.Now().UnixNano())
+	ip := fmt.Sprintf("203.0.113.%d", time.Now().UnixNano()%250)
+	h := l.Middleware(name, Limit{Rate: 1, Period: time.Hour, Burst: 1}, func(r *http.Request) Client {
+		return Client{IP: ip, ID: r.Header.Get("X-Test-Id")}
+	})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	call := func(id string) int {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Header.Set("X-Test-Id", id)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	for i := range 3 {
+		if code := call(fmt.Sprintf("reader-%d", i)); code != http.StatusNoContent {
+			t.Fatalf("reader %d behind the shared address was limited (%d)", i, code)
+		}
+	}
+	if code := call("reader-0"); code != http.StatusTooManyRequests {
+		t.Fatalf("second request by one reader passed (%d), want 429", code)
+	}
+	for i := 3; i < sharedAddressFactor; i++ {
+		call(fmt.Sprintf("reader-%d", i))
+	}
+	if code := call("reader-new"); code != http.StatusTooManyRequests {
+		t.Fatalf("address cap not applied after %d readers (%d)", sharedAddressFactor, code)
+	}
+}
+
 func TestMiddlewareSkipsUnattributedServerTraffic(t *testing.T) {
 	l := New(testenv.Redis(t))
 	name := fmt.Sprintf("test-unattributed-%d", time.Now().UnixNano())
-	h := l.Middleware(name, Limit{Rate: 1, Period: time.Hour, Burst: 1}, func(*http.Request) string { return "" })(
+	h := l.Middleware(name, Limit{Rate: 1, Period: time.Hour, Burst: 1}, func(*http.Request) Client { return Client{} })(
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
 	for i := range 5 {
 		rec := httptest.NewRecorder()
