@@ -84,6 +84,9 @@ func (s *Service) Register(d Subscriber) {
 	// skipped. Comments are the most frequent event by far, and the dispatcher coalesces a burst
 	// on one thread into a single purge.
 	d.On(outbox.TopicCommentsChanged, func(ctx context.Context, e outbox.Event) error {
+		if err := s.replica.WaitReplicaCaughtUp(ctx, replicaWait); err != nil {
+			return err
+		}
 		return s.purgeCDN(ctx, []string{"comments:" + strconv.FormatInt(e.AggregateID, 10)})
 	})
 }
@@ -97,7 +100,8 @@ func (s *Service) contentChanged(ctx context.Context, e outbox.Event) error {
 		return err
 	}
 	// Everything below makes readers (and the web's re-render) re-read this content from the
-	// replica; a lagging replica would re-cache the old version until the next publish.
+	// replica; a lagging replica would re-cache the old version until the next publish. The
+	// same guard precedes every other purge below, for the same reason.
 	if err := s.replica.WaitReplicaCaughtUp(ctx, replicaWait); err != nil {
 		return err
 	}
@@ -121,8 +125,12 @@ func (s *Service) contentChanged(ctx context.Context, e outbox.Event) error {
 	return s.indexNow(ctx, paths)
 }
 
-// invalidate drops cached responses carrying these tags in Next.js and at the CDN.
+// invalidate drops cached responses carrying these tags in Next.js and at the CDN, once the
+// replica they will be re-read from has the change.
 func (s *Service) invalidate(ctx context.Context, tags ...string) error {
+	if err := s.replica.WaitReplicaCaughtUp(ctx, replicaWait); err != nil {
+		return err
+	}
 	return s.refresh(ctx, nil, tags...)
 }
 

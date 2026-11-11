@@ -143,12 +143,16 @@ func TestUnpublishedPageDropsTagsWithoutPaths(t *testing.T) {
 }
 
 // Taxonomy changes drop exactly the tags that cache them, at Next.js and the CDN. A comment
-// only purges the CDN: threads are never in the Next.js data cache.
+// only purges the CDN: threads are never in the Next.js data cache. Both wait for the replica
+// first, since what is re-cached next is read from it.
 func TestTaxonomyAndCommentChangesPurgeTheirTags(t *testing.T) {
 	cfg := Config{RevalidateURL: "https://web/api/revalidate", CloudflareZoneID: "zone", CloudflareAPIToken: "tok"}
-	_, rec, _, h := newService(cfg, fixedPath{})
+	s, rec, _, h := newService(cfg, fixedPath{})
 	fire(t, h, outbox.TopicCategoryChanged, 1, outbox.CategoryEvent{Paths: []string{"dsa"}})
 	fire(t, h, outbox.TopicCommentsChanged, 9, outbox.CommentsEvent{ContentID: 9})
+	if waits := s.replica.(*replicaStub).waits; waits != 2 {
+		t.Errorf("replica waits = %d, want one per event", waits)
+	}
 	want := []string{"categories,listings", "categories,listings", "comments:9"}
 	if len(rec.sent) != len(want) {
 		t.Fatalf("sent %d requests, want %d", len(rec.sent), len(want))
