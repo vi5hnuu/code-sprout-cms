@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -48,8 +49,20 @@ func (s *Service) RunNext(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
-// RunQueue processes submissions until ctx ends; several workers can run it at once.
-func (s *Service) RunQueue(ctx context.Context, idle time.Duration) {
+// RunQueue judges submissions until ctx ends, `workers` at a time. Judging is almost entirely
+// waiting on ls-judge, so one goroutine per worker is cheap, and the judge itself bounds how
+// much runs at once; the lease query (SKIP LOCKED) keeps every worker, here and in other
+// replicas, on a different submission. With a single worker a contest would queue behind one
+// slow submission at a time.
+func (s *Service) RunQueue(ctx context.Context, idle time.Duration, workers int) {
+	var wg sync.WaitGroup
+	for range max(1, workers) {
+		wg.Go(func() { s.runLoop(ctx, idle) })
+	}
+	wg.Wait()
+}
+
+func (s *Service) runLoop(ctx context.Context, idle time.Duration) {
 	for {
 		worked, err := s.RunNext(ctx)
 		if err != nil && ctx.Err() == nil {

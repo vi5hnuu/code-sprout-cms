@@ -44,6 +44,18 @@ type Config struct {
 	Search   SearchConfig
 	YouTube  YouTubeConfig
 	Delivery DeliveryConfig
+	Worker   WorkerConfig
+}
+
+// WorkerConfig sizes the worker's concurrent loops. Both are per process; replicas add up.
+type WorkerConfig struct {
+	// OutboxConcurrency is how many lanes handle one outbox batch at once (events about one
+	// aggregate always share a lane). Each lane holds at most one downstream HTTP call.
+	OutboxConcurrency int
+	// JudgeConcurrency is how many submissions are judged at once. Each costs one goroutine
+	// waiting on ls-judge plus a short poll every few hundred milliseconds; the judge's own
+	// capacity, not this number, is the real limit.
+	JudgeConcurrency int
 }
 
 // YouTubeConfig mirrors channels' uploads as videos (internal/video). Without an API key the
@@ -148,6 +160,10 @@ func Load() (Config, error) {
 			RevalidateURL: os.Getenv("WEB_REVALIDATE_URL"), RevalidateSecret: os.Getenv("WEB_REVALIDATE_SECRET"),
 			CloudflareZoneID: os.Getenv("CLOUDFLARE_ZONE_ID"), CloudflareAPIToken: os.Getenv("CLOUDFLARE_API_TOKEN"),
 			SiteURL: os.Getenv("SITE_URL"), IndexNowKey: os.Getenv("INDEXNOW_KEY"),
+		},
+		Worker: WorkerConfig{
+			OutboxConcurrency: intOr("OUTBOX_CONCURRENCY", 8, &errs),
+			JudgeConcurrency:  intOr("JUDGE_CONCURRENCY", 8, &errs),
 		},
 
 		Storage: StorageConfig{

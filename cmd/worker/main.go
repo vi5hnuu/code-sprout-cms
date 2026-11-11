@@ -59,7 +59,7 @@ func run() error {
 	defer database.Close()
 
 	// Handlers are registered here as their domains land (search, sitemap, revalidation).
-	dispatcher := outbox.NewDispatcher(database)
+	dispatcher := outbox.NewDispatcher(database, cfg.Worker.OutboxConcurrency)
 	assets := asset.NewService(database, storage.FromConfig(cfg.Storage), asset.ConfigFrom(cfg.Storage))
 	rdb := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr, Password: cfg.RedisPassword})
 	defer rdb.Close()
@@ -87,7 +87,7 @@ func run() error {
 		RevalidateURL: dc.RevalidateURL, RevalidateSecret: dc.RevalidateSecret,
 		CloudflareZoneID: dc.CloudflareZoneID, CloudflareAPIToken: dc.CloudflareAPIToken,
 		SiteURL: dc.SiteURL, IndexNowKey: dc.IndexNowKey,
-	}, reader, content.NewSitemaps(database, assets)).Register(dispatcher)
+	}, reader, content.NewSitemaps(database, assets), database).Register(dispatcher)
 
 	// Monitoring: event outcomes, queue backlogs and pool use on the worker's internal port.
 	m := metrics.New()
@@ -137,7 +137,7 @@ func run() error {
 	wg.Go(func() { assets.RunVerifier(ctx, 5*time.Second) })
 	wg.Go(func() { contents.RunScheduler(ctx, 30*time.Second) })
 	wg.Go(func() { engagements.RunCounterFlusher(ctx, 30*time.Second) })
-	wg.Go(func() { submissions.RunQueue(ctx, time.Second) })
+	wg.Go(func() { submissions.RunQueue(ctx, time.Second, cfg.Worker.JudgeConcurrency) })
 
 	// Periodic upkeep. Each job is idempotent, so running on several replicas is safe.
 	wg.Go(func() {

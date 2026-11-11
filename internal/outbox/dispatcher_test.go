@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -43,7 +45,7 @@ func TestDispatchDeliversCommittedEventsOnly(t *testing.T) {
 	})
 
 	var delivered []int64
-	disp := NewDispatcher(d)
+	disp := NewDispatcher(d, 4)
 	disp.On(topic, func(_ context.Context, e Event) error {
 		var p ContentEvent
 		if err := json.Unmarshal(e.Payload, &p); err != nil {
@@ -72,7 +74,7 @@ func TestDispatchRetriesFailuresWithBackoff(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls := 0
-	disp := NewDispatcher(d)
+	disp := NewDispatcher(d, 4)
 	disp.On(topic, func(context.Context, Event) error { calls++; return errors.New("search is down") })
 	drain(t, disp)
 
@@ -122,5 +124,63 @@ func assertPending(t *testing.T, d interface {
 	}
 	if got != want {
 		t.Fatalf("pending events = %d, want %d", got, want)
+	}
+}
+
+// Identical events in one batch are handled once, and events about one aggregate are handled
+// in order even with several lanes; all rows end up processed.
+func TestDispatchCoalescesDuplicatesAndKeepsAggregateOrder(t *testing.T) {
+	d := testenv.DB(t)
+	ctx := context.Background()
+	topic := fmt.Sprintf("test.%d", time.Now().UnixNano())
+	if err := d.InTx(ctx, func(tx pgx.Tx) error {
+		for i := 0; i < 5; i++ { // five identical "comments changed" on page 1
+			if err := Publish(ctx, tx, topic, 1, CommentsEvent{ContentID: 1}); err != nil {
+				return err
+			}
+		}
+		for i := 1; i <= 3; i++ { // three distinct, ordered events on page 2
+			if err := Publish(ctx, tx, topic, 2, map[string]int{"step": i}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	runs := map[int64][]string{}
+	disp := NewDispatcher(d, 4)
+	disp.On(topic, func(_ context.Context, e Event) error {
+		mu.Lock()
+		defer mu.Unlock()
+		runs[e.AggregateID] = append(runs[e.AggregateID], string(e.Payload))
+		return nil
+	})
+	drain(t, disp)
+	if len(runs[1]) != 1 {
+		t.Errorf("aggregate 1 handled %d times, want 1 (coalesced)", len(runs[1]))
+	}
+	// Payloads come back as Postgres prints jsonb (with a space after the colon).
+	if got := strings.Join(runs[2], " "); got != `{"step": 1} {"step": 2} {"step": 3}` {
+		t.Errorf("aggregate 2 order = %s", got)
+	}
+	assertPending(t, d, topic, 0)
+}
+
+func TestAssignLanesKeepsOneAggregateOnOneLane(t *testing.T) {
+	disp := NewDispatcher(nil, 3)
+	var groups []*group
+	for i := 0; i < 30; i++ {
+		groups = append(groups, &group{event: Event{AggregateID: int64(i % 5)}})
+	}
+	seen := map[int64]int{}
+	for lane, gs := range disp.assignLanes(groups) {
+		for _, g := range gs {
+			if prev, ok := seen[g.event.AggregateID]; ok && prev != lane {
+				t.Fatalf("aggregate %d on lanes %d and %d", g.event.AggregateID, prev, lane)
+			}
+			seen[g.event.AggregateID] = lane
+		}
 	}
 }
