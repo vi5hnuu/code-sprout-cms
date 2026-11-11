@@ -141,6 +141,10 @@ services:
       network: host
       args:
         CMS_API_URL: ${WEB_BUILD_API_URL:-http://127.0.0.1:4411}
+        # ls-judge runs under systemd on the host (see /etc/systemd/system/ls-judge.service)
+        # on 127.0.0.1:8090. Reachable at build time because the web stage builds with
+        # `network: host`; at runtime the web container reaches it via host.docker.internal.
+        LS_JUDGE_API_URL: ${WEB_BUILD_JUDGE_URL:-http://127.0.0.1:8090}
         NEXT_PUBLIC_SITE_URL: ${PUBLIC_SCHEME:-https}://${SITE_DOMAIN:?set SITE_DOMAIN in ./env}
         NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
         NEXT_PUBLIC_YOUTUBE_CHANNEL_URL: ${YOUTUBE_CHANNEL_URL:-}
@@ -153,6 +157,8 @@ services:
     # prod.env via env_file above.
     environment:
       CMS_API_URL: http://api:9300
+      # ls-judge lives on the host (code execution + contests), same gateway as auth.
+      LS_JUDGE_API_URL: http://host.docker.internal:8090
       AUTH_URL: http://host.docker.internal:8081
       AUTH_AUDIENCE: code-sprout-cms
       CLIENT_IP_HEADER: x-real-ip
