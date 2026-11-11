@@ -3,11 +3,13 @@ package delivery
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"code-sprout-cms/internal/content"
 	"code-sprout-cms/internal/outbox"
@@ -44,6 +46,17 @@ func (f fixedPath) PathOf(context.Context, int64) (string, bool, error) { return
 
 type sitemapCalls struct{ refreshed []int64 }
 
+// replicaStub records that the replica guard ran before any revalidation.
+type replicaStub struct {
+	waits int
+	err   error
+}
+
+func (r *replicaStub) WaitReplicaCaughtUp(context.Context, time.Duration) error {
+	r.waits++
+	return r.err
+}
+
 func (s *sitemapCalls) Refresh(_ context.Context, _ content.Type, id int64) error {
 	s.refreshed = append(s.refreshed, id)
 	return nil
@@ -57,7 +70,7 @@ func (h handlers) On(topic string, fn outbox.Handler) { h[topic] = append(h[topi
 func newService(cfg Config, paths Paths) (*Service, *recorder, *sitemapCalls, handlers) {
 	rec := &recorder{}
 	maps := &sitemapCalls{}
-	s := NewService(cfg, paths, maps)
+	s := NewService(cfg, paths, maps, &replicaStub{})
 	s.http = &http.Client{Transport: rec}
 	h := handlers{}
 	s.Register(h)
@@ -123,18 +136,20 @@ func TestUnpublishedPageDropsTagsWithoutPaths(t *testing.T) {
 	if len(rec.sent) != 1 {
 		t.Fatalf("sent %d requests, want only revalidation", len(rec.sent))
 	}
-	if p := rec.sent[0].Body["paths"]; p != nil {
-		t.Errorf("paths = %v, want none", p)
+	// An empty array, never null: the endpoint iterates the field.
+	if p, ok := rec.sent[0].Body["paths"].([]any); !ok || len(p) != 0 {
+		t.Errorf("paths = %v, want []", rec.sent[0].Body["paths"])
 	}
 }
 
-// Taxonomy and comment changes drop exactly the tags that cache them, at Next.js and the CDN.
+// Taxonomy changes drop exactly the tags that cache them, at Next.js and the CDN. A comment
+// only purges the CDN: threads are never in the Next.js data cache.
 func TestTaxonomyAndCommentChangesPurgeTheirTags(t *testing.T) {
 	cfg := Config{RevalidateURL: "https://web/api/revalidate", CloudflareZoneID: "zone", CloudflareAPIToken: "tok"}
 	_, rec, _, h := newService(cfg, fixedPath{})
 	fire(t, h, outbox.TopicCategoryChanged, 1, outbox.CategoryEvent{Paths: []string{"dsa"}})
 	fire(t, h, outbox.TopicCommentsChanged, 9, outbox.CommentsEvent{ContentID: 9})
-	want := []string{"categories,listings", "categories,listings", "comments:9", "comments:9"}
+	want := []string{"categories,listings", "categories,listings", "comments:9"}
 	if len(rec.sent) != len(want) {
 		t.Fatalf("sent %d requests, want %d", len(rec.sent), len(want))
 	}
@@ -145,6 +160,29 @@ func TestTaxonomyAndCommentChangesPurgeTheirTags(t *testing.T) {
 	}
 	if auth := rec.sent[1].Header.Get("Authorization"); auth != "Bearer tok" {
 		t.Errorf("CDN purge auth = %q", auth)
+	}
+	if !strings.Contains(rec.sent[2].URL, "cloudflare") {
+		t.Errorf("comment purge went to %s, want the CDN only", rec.sent[2].URL)
+	}
+}
+
+// A lagging replica postpones the revalidation (the event is retried) instead of letting the
+// web re-cache the old version of the page; a tag-only purge waits too, since it re-reads too.
+func TestContentChangeWaitsForReplicaBeforeRevalidating(t *testing.T) {
+	cfg := Config{RevalidateURL: "https://web/api/revalidate"}
+	rec := &recorder{}
+	replica := &replicaStub{err: errors.New("lagging")}
+	s := NewService(cfg, fixedPath{path: "/blog/x", live: true}, &sitemapCalls{}, replica)
+	s.http = &http.Client{Transport: rec}
+	h := handlers{}
+	s.Register(h)
+	raw, _ := json.Marshal(outbox.ContentEvent{Type: string(content.TypeBlog)})
+	err := h[outbox.TopicContentPublished][0](context.Background(), outbox.Event{Topic: outbox.TopicContentPublished, AggregateID: 3, Payload: raw})
+	if err == nil || replica.waits != 1 {
+		t.Fatalf("err = %v, waits = %d; want the lag error after one wait", err, replica.waits)
+	}
+	if len(rec.sent) != 0 {
+		t.Fatalf("sent %d requests while the replica lagged", len(rec.sent))
 	}
 }
 
