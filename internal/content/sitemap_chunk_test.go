@@ -10,9 +10,9 @@ const idShardBits = 47
 
 func TestChunkRange_Shard0(t *testing.T) {
 	for _, c := range []struct {
-		name       string
-		id         int64
-		wantChunk  int64
+		name           string
+		id             int64
+		wantChunk      int64
 		wantLo, wantHi int64
 	}{
 		{"zero id", 0, 0, 0, 50_000},
@@ -49,15 +49,17 @@ func TestChunkRange_ShardsAbove0(t *testing.T) {
 			t.Fatalf("shard %d: (lo,hi) = (%d,%d); want (%d,%d)",
 				shard, lo, hi, wantChunk*SitemapChunkSize, (wantChunk+1)*SitemapChunkSize)
 		}
-		// Any two ids within the same 50 000-wide window must share a chunk.
-		if alt, _, _ := ChunkRange(id + SitemapChunkSize - 1); alt != chunk {
-			t.Fatalf("shard %d: id %d and %d gave different chunks (%d vs %d)",
-				shard, id, id+SitemapChunkSize-1, chunk, alt)
+		// Windows are global (id / 50 000), and a shard's first id (2^47·shard) is not a multiple
+		// of 50 000, so the window holding it starts before the shard. Every id in [lo, hi)
+		// shares the chunk, and hi starts the next one.
+		if first, _, _ := ChunkRange(lo); first != chunk {
+			t.Fatalf("shard %d: window start %d gave chunk %d, want %d", shard, lo, first, chunk)
 		}
-		// The next id crosses into the next chunk.
-		if next, _, _ := ChunkRange(id + SitemapChunkSize); next != chunk+1 {
-			t.Fatalf("shard %d: id %d expected chunk %d, got %d",
-				shard, id+SitemapChunkSize, chunk+1, next)
+		if last, _, _ := ChunkRange(hi - 1); last != chunk {
+			t.Fatalf("shard %d: window end %d gave chunk %d, want %d", shard, hi-1, last, chunk)
+		}
+		if next, _, _ := ChunkRange(hi); next != chunk+1 {
+			t.Fatalf("shard %d: id %d expected chunk %d, got %d", shard, hi, chunk+1, next)
 		}
 	}
 }
