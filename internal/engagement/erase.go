@@ -10,8 +10,9 @@ import (
 )
 
 // EraseUser removes a reader's likes, saves, bookmark lists and comment votes, and empties
-// every comment they wrote (account erase). Counters drop by what was removed, and each page whose discussion
-// changed gets a comments event so caches refresh. Runs inside the caller's transaction.
+// every comment they wrote (account erase). Counters drop by what was removed, and each page
+// whose discussion changed gets a comments event so caches refresh. Runs inside the caller's
+// transaction.
 func EraseUser(ctx context.Context, tx pgx.Tx, userID int64) error {
 	q := engagementdb.New(tx)
 	perPage := map[int64]*deltas{}

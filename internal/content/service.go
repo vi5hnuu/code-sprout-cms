@@ -323,8 +323,6 @@ func (s *Service) anyRevision(ctx context.Context, q *contentdb.Queries, id int6
 	return r, meta, body, err
 }
 
-// ListMine lists the caller's own items, most recently updated first. `filterType` keeps only
-// items of that content type when non-empty; "" lists every type.
 // MineFilter narrows the author's own list; a zero field means "any".
 type MineFilter struct {
 	Type   Type

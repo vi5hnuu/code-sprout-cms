@@ -3,6 +3,8 @@ package engagement
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
 	"sync"
 	"testing"
 
@@ -471,5 +473,27 @@ func TestThreadTopOrder(t *testing.T) {
 	want := []int64{ids[0], ids[2], ids[1]}
 	if len(got) != 3 || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
 		t.Fatalf("top order = %v, want %v", got, want)
+	}
+
+	// A deleted root kept for its replies shows no score but keeps its rank, and a page that
+	// ends on it must not skip the comments ranked below it.
+	if _, err := e.svc.CreateComment(ctx, voters[0], id, &ids[0], "reply keeps the root"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.DeleteComment(ctx, author, id, ids[0]); err != nil {
+		t.Fatal(err)
+	}
+	first, err := e.svc.ThreadTop(ctx, id, page.Request[TopCursor]{Limit: 1})
+	if err != nil || len(first.Items) != 1 || first.Items[0].ID != ids[0] || first.Items[0].Score != 0 || first.NextCursor == nil {
+		t.Fatalf("first page = %+v, %v; want the deleted root, score hidden, more to come", first, err)
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(*first.NextCursor)
+	var key TopCursor
+	if err != nil || json.Unmarshal(raw, &key) != nil {
+		t.Fatalf("cursor %q does not decode: %v", *first.NextCursor, err)
+	}
+	rest, err := e.svc.ThreadTop(ctx, id, page.Request[TopCursor]{Limit: 10, Key: &key})
+	if err != nil || len(rest.Items) != 2 || rest.Items[0].ID != ids[2] || rest.Items[1].ID != ids[1] {
+		t.Fatalf("after the deleted root = %+v, %v; want [%d %d]", rest.Items, err, ids[2], ids[1])
 	}
 }

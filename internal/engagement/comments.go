@@ -45,6 +45,10 @@ type Comment struct {
 	Score      int32            `json:"score"` // readers who marked it helpful; 0 for deleted comments
 	CreatedAt  time.Time        `json:"createdAt"`
 	EditedAt   *time.Time       `json:"editedAt"`
+
+	// rank is the stored score whatever the status. The "top" order sorts by it in SQL, so its
+	// cursor must carry it too; Score above is hidden (0) on deleted comments.
+	rank int32
 }
 
 type CommentCursor struct {
@@ -62,7 +66,7 @@ type TopCursor struct {
 	ID    int64 `json:"i"`
 }
 
-func topCursor(c Comment) TopCursor { return TopCursor{Score: c.Score, ID: c.ID} }
+func topCursor(c Comment) TopCursor { return TopCursor{Score: c.rank, ID: c.ID} }
 
 func validateCommentBody(body string) (string, error) {
 	body = strings.TrimSpace(body)
@@ -341,8 +345,8 @@ func (s *Service) Thread(ctx context.Context, contentID int64, req page.Request[
 	return page.Build(out, req.Limit, commentCursor), nil
 }
 
-// ThreadTop lists top-level comments of a live item, most-voted first. Deleted roots kept for
-// their replies score 0 here, so they sink below voted comments.
+// ThreadTop lists top-level comments of a live item, most-voted first. A deleted root kept for
+// its replies keeps its place by its stored score but shows none.
 func (s *Service) ThreadTop(ctx context.Context, contentID int64, req page.Request[TopCursor]) (page.Page[Comment], error) {
 	if err := s.requireLive(ctx, contentID); err != nil {
 		return page.Page[Comment]{}, err
@@ -391,7 +395,7 @@ func (s *Service) hydrate(ctx context.Context, rows []engagementdb.Comment) ([]C
 	out := make([]Comment, len(rows))
 	for i, r := range rows {
 		c := Comment{ID: r.ID, ContentID: r.ContentID, RootID: r.RootID, ParentID: r.ParentID,
-			ReplyCount: r.ReplyCount, CreatedAt: r.CreatedAt, EditedAt: r.EditedAt}
+			ReplyCount: r.ReplyCount, CreatedAt: r.CreatedAt, EditedAt: r.EditedAt, rank: r.Score}
 		if CommentStatus(r.Status) == CommentVisible {
 			a := authors[r.AuthorID]
 			c.Author, c.Body, c.Score = &a, r.BodyMd, r.Score
