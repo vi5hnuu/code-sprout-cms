@@ -427,3 +427,49 @@ func TestCommentVotes(t *testing.T) {
 		t.Fatalf("%d votes left after erase", n)
 	}
 }
+
+// Top order puts the most-voted comment first and pages by (score, id) without gaps.
+func TestThreadTopOrder(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	id := e.item()
+	author := testenv.User(t, e.d)
+	voters := []auth.Principal{testenv.User(t, e.d), testenv.User(t, e.d)}
+	var ids []int64
+	for _, body := range []string{"first", "second", "third"} {
+		c, err := e.svc.CreateComment(ctx, author, id, nil, body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, c.ID)
+	}
+	// first: 2 votes, second: 0, third: 1  →  first, third, second
+	for _, v := range voters {
+		if err := e.svc.VoteComment(ctx, v, id, ids[0]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := e.svc.VoteComment(ctx, voters[0], id, ids[2]); err != nil {
+		t.Fatal(err)
+	}
+	var got []int64
+	req := page.Request[TopCursor]{Limit: 1}
+	for {
+		pg, err := e.svc.ThreadTop(ctx, id, req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range pg.Items {
+			got = append(got, c.ID)
+		}
+		if pg.NextCursor == nil {
+			break
+		}
+		last := pg.Items[len(pg.Items)-1]
+		req.Key = &TopCursor{Score: last.Score, ID: last.ID}
+	}
+	want := []int64{ids[0], ids[2], ids[1]}
+	if len(got) != 3 || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
+		t.Fatalf("top order = %v, want %v", got, want)
+	}
+}

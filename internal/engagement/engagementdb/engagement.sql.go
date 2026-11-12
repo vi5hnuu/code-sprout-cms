@@ -822,6 +822,61 @@ func (q *Queries) ListRootComments(ctx context.Context, arg ListRootCommentsPara
 	return items, nil
 }
 
+const listRootCommentsTop = `-- name: ListRootCommentsTop :many
+SELECT id, content_id, root_id, parent_id, author_id, body_md, status, score, reply_count, created_at, edited_at FROM comment
+WHERE content_id = $1 AND root_id IS NULL
+  AND (status = 'VISIBLE' OR (status = 'DELETED' AND reply_count > 0))
+  AND ($2::int IS NULL
+       OR (score, id) < ($2::int, $3::bigint))
+ORDER BY score DESC, id DESC
+LIMIT $4
+`
+
+type ListRootCommentsTopParams struct {
+	ContentID  int64
+	AfterScore *int32
+	AfterID    *int64
+	RowLimit   int32
+}
+
+// Same rows as ListRootComments, most-voted first (idx_comment_roots_top).
+func (q *Queries) ListRootCommentsTop(ctx context.Context, arg ListRootCommentsTopParams) ([]Comment, error) {
+	rows, err := q.db.Query(ctx, listRootCommentsTop,
+		arg.ContentID,
+		arg.AfterScore,
+		arg.AfterID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Comment{}
+	for rows.Next() {
+		var i Comment
+		if err := rows.Scan(
+			&i.ID,
+			&i.ContentID,
+			&i.RootID,
+			&i.ParentID,
+			&i.AuthorID,
+			&i.BodyMd,
+			&i.Status,
+			&i.Score,
+			&i.ReplyCount,
+			&i.CreatedAt,
+			&i.EditedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listStats = `-- name: ListStats :many
 SELECT content_id, views, likes, comments, bookmarks, shares, updated_at FROM content_stats WHERE content_id = ANY ($1::bigint[])
 `

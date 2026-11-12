@@ -115,6 +115,16 @@ WHERE content_id = sqlc.arg(content_id) AND root_id IS NULL
 ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg(row_limit);
 
+-- Same rows as ListRootComments, most-voted first (idx_comment_roots_top).
+-- name: ListRootCommentsTop :many
+SELECT * FROM comment
+WHERE content_id = sqlc.arg(content_id) AND root_id IS NULL
+  AND (status = 'VISIBLE' OR (status = 'DELETED' AND reply_count > 0))
+  AND (sqlc.narg(after_score)::int IS NULL
+       OR (score, id) < (sqlc.narg(after_score)::int, sqlc.narg(after_id)::bigint))
+ORDER BY score DESC, id DESC
+LIMIT sqlc.arg(row_limit);
+
 -- name: ListReplies :many
 SELECT * FROM comment
 WHERE content_id = sqlc.arg(content_id) AND root_id = sqlc.arg(root_id) AND status = 'VISIBLE'

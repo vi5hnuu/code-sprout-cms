@@ -1126,11 +1126,16 @@ paths:
     get:
       tags: [engagement]
       operationId: getThread
-      summary: Top-level comments of a live item, newest first.
+      summary: Top-level comments of a live item, newest first or most-voted first.
       security: []
       parameters:
         - { $ref: "#/components/parameters/Cursor" }
         - { $ref: "#/components/parameters/Limit" }
+        - in: query
+          name: sort
+          required: false
+          description: new (default) or top. A cursor only continues the sort it came from.
+          schema: { type: string, enum: [new, top], default: new }
       responses:
         "200": { $ref: "#/components/responses/CommentPage" }
         "400": { $ref: "#/components/responses/Problem" }

@@ -54,6 +54,16 @@ type CommentCursor struct {
 
 func commentCursor(c Comment) CommentCursor { return CommentCursor{At: c.CreatedAt, ID: c.ID} }
 
+// TopCursor pages the "top" order. A score can change between pages, so a comment may move
+// across the boundary (seen twice or skipped), as on any vote-ranked list; the keyset keeps
+// every page an index range regardless.
+type TopCursor struct {
+	Score int32 `json:"s"`
+	ID    int64 `json:"i"`
+}
+
+func topCursor(c Comment) TopCursor { return TopCursor{Score: c.Score, ID: c.ID} }
+
 func validateCommentBody(body string) (string, error) {
 	body = strings.TrimSpace(body)
 	if body == "" {
@@ -329,6 +339,27 @@ func (s *Service) Thread(ctx context.Context, contentID int64, req page.Request[
 		return page.Page[Comment]{}, err
 	}
 	return page.Build(out, req.Limit, commentCursor), nil
+}
+
+// ThreadTop lists top-level comments of a live item, most-voted first. Deleted roots kept for
+// their replies score 0 here, so they sink below voted comments.
+func (s *Service) ThreadTop(ctx context.Context, contentID int64, req page.Request[TopCursor]) (page.Page[Comment], error) {
+	if err := s.requireLive(ctx, contentID); err != nil {
+		return page.Page[Comment]{}, err
+	}
+	params := engagementdb.ListRootCommentsTopParams{ContentID: contentID, RowLimit: int32(req.Limit + 1)}
+	if req.Key != nil {
+		params.AfterScore, params.AfterID = &req.Key.Score, &req.Key.ID
+	}
+	rows, err := engagementdb.New(s.db.Replica).ListRootCommentsTop(ctx, params)
+	if err != nil {
+		return page.Page[Comment]{}, err
+	}
+	out, err := s.hydrate(ctx, rows)
+	if err != nil {
+		return page.Page[Comment]{}, err
+	}
+	return page.Build(out, req.Limit, topCursor), nil
 }
 
 // Replies lists one thread's replies, oldest first (conversation order).

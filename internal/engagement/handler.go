@@ -325,13 +325,28 @@ func (h *Handler) thread(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	req, err := page.Parse[CommentCursor](r)
-	if err != nil {
-		return err
-	}
-	res, err := h.svc.Thread(r.Context(), contentID, req)
-	if err != nil {
-		return err
+	var res page.Page[Comment]
+	// ?sort=new (default) or top. Each order has its own cursor shape, so a cursor is only
+	// meaningful with the sort it came from.
+	switch r.URL.Query().Get("sort") {
+	case "", "new":
+		req, err := page.Parse[CommentCursor](r)
+		if err != nil {
+			return err
+		}
+		if res, err = h.svc.Thread(r.Context(), contentID, req); err != nil {
+			return err
+		}
+	case "top":
+		req, err := page.Parse[TopCursor](r)
+		if err != nil {
+			return err
+		}
+		if res, err = h.svc.ThreadTop(r.Context(), contentID, req); err != nil {
+			return err
+		}
+	default:
+		return apperr.ValidationFailed(map[string]string{"sort": "sort must be new or top"})
 	}
 	httpx.Public(w, 30*time.Second, 5*time.Minute, "comments:"+strconv.FormatInt(contentID, 10))
 	httpx.JSON(w, http.StatusOK, res)
