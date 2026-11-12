@@ -6,6 +6,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
+
 	"code-sprout-cms/internal/access"
 	"code-sprout-cms/internal/asset"
 	"code-sprout-cms/internal/auth"
@@ -354,4 +356,74 @@ func countRows(t *testing.T, d *db.DB, q string, args ...any) int {
 		t.Fatal(err)
 	}
 	return n
+}
+
+// A vote is one row per reader per comment and moves the score once; the voter's own state
+// comes from VotedComments; withdrawing and account erase both take the point back.
+func TestCommentVotes(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	id := e.item()
+	alice, bob, carol := testenv.User(t, e.d), testenv.User(t, e.d), testenv.User(t, e.d)
+	c, err := e.svc.CreateComment(ctx, alice, id, nil, "Use lo + (hi - lo) / 2.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := e.svc.CreateComment(ctx, alice, id, nil, "Or unsigned shift.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	score := func() int32 {
+		t.Helper()
+		pg, err := e.svc.Thread(ctx, id, page.Request[CommentCursor]{Limit: 10})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, x := range pg.Items {
+			if x.ID == c.ID {
+				return x.Score
+			}
+		}
+		t.Fatal("comment missing from thread")
+		return 0
+	}
+
+	wantCode(t, e.svc.VoteComment(ctx, auth.Principal{UserID: bob.UserID, IsGuest: true}, id, c.ID), "comment.vote_guest")
+	wantCode(t, e.svc.VoteComment(ctx, alice, id, c.ID), "comment.own_vote")
+	wantCode(t, e.svc.VoteComment(ctx, bob, id, 1<<62), "comment.not_found")
+
+	for range 2 { // idempotent
+		if err := e.svc.VoteComment(ctx, bob, id, c.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := e.svc.VoteComment(ctx, carol, id, c.ID); err != nil {
+		t.Fatal(err)
+	}
+	if s := score(); s != 2 {
+		t.Fatalf("score = %d, want 2", s)
+	}
+	voted, err := e.svc.VotedComments(ctx, bob, id, []int64{c.ID, other.ID})
+	if err != nil || len(voted) != 1 || voted[0] != c.ID {
+		t.Fatalf("bob voted = %v, %v; want [%d]", voted, err, c.ID)
+	}
+
+	for range 2 { // idempotent
+		if err := e.svc.UnvoteComment(ctx, carol, id, c.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if s := score(); s != 1 {
+		t.Fatalf("score after withdrawal = %d, want 1", s)
+	}
+
+	if err := e.d.InTx(ctx, func(tx pgx.Tx) error { return EraseUser(ctx, tx, bob.UserID) }); err != nil {
+		t.Fatal(err)
+	}
+	if s := score(); s != 0 {
+		t.Fatalf("score after the voter's erase = %d, want 0", s)
+	}
+	if n := countRows(t, e.d, "SELECT count(*) FROM comment_vote WHERE user_id = $1", bob.UserID); n != 0 {
+		t.Fatalf("%d votes left after erase", n)
+	}
 }

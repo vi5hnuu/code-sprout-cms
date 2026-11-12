@@ -1075,6 +1075,51 @@ paths:
         "400": { $ref: "#/components/responses/Problem" }
         "401": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
+  /v1/me/comments/{contentId}/{commentId}/vote:
+    parameters:
+      - { $ref: "#/components/parameters/ContentID" }
+      - { $ref: "#/components/parameters/CommentID" }
+    put:
+      tags: [engagement]
+      operationId: voteComment
+      summary: Mark a comment helpful (one vote per reader; repeating is a no-op). Full accounts only, not your own comment.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Voted }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+    delete:
+      tags: [engagement]
+      operationId: unvoteComment
+      summary: Withdraw your vote (a no-op when there is none).
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Withdrawn }
+        "401": { $ref: "#/components/responses/Problem" }
+  /v1/me/comment-votes/{contentId}:
+    parameters:
+      - { $ref: "#/components/parameters/ContentID" }
+    get:
+      tags: [engagement]
+      operationId: getCommentVotes
+      summary: Which of up to 100 comments on this item the caller voted for.
+      description: Threads are public and cached for everyone; the client asks for the caller's own votes separately.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: ids, in: query, required: true, description: Comma-separated comment ids., schema: { type: string }, example: "301,302" }
+      responses:
+        "200":
+          description: Ids of the listed comments the caller voted for
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { type: integer, format: int64 } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
   /v1/public/threads/{contentId}:
     parameters:
       - { $ref: "#/components/parameters/ContentID" }
@@ -2795,7 +2840,7 @@ components:
         bookmarkListId: { type: [integer, "null"], format: int64 }
     Comment:
       type: object
-      required: [id, contentId, rootId, parentId, author, body, deleted, replyCount, createdAt, editedAt]
+      required: [id, contentId, rootId, parentId, author, body, deleted, replyCount, score, createdAt, editedAt]
       properties:
         id: { type: integer, format: int64 }
         contentId: { type: integer, format: int64 }
@@ -2808,6 +2853,7 @@ components:
         body: { type: string, description: Markdown; empty when deleted. }
         deleted: { type: boolean }
         replyCount: { type: integer }
+        score: { type: integer, description: Readers who marked it helpful; 0 for deleted comments. }
         createdAt: { type: string, format: date-time }
         editedAt: { type: [string, "null"], format: date-time }
     CommentReport:

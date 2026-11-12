@@ -179,3 +179,33 @@ SET status = 'DELETED', body_md = '[deleted]', edited_at = NULL
 FROM old
 WHERE c.content_id = old.content_id AND c.id = old.id
 RETURNING old.content_id, old.root_id, old.status AS old_status;
+
+-- ── Comment votes ───────────────────────────────────────────────────────────
+
+-- name: InsertCommentVote :execrows
+INSERT INTO comment_vote (content_id, user_id, comment_id)
+VALUES (sqlc.arg(content_id), sqlc.arg(user_id), sqlc.arg(comment_id))
+ON CONFLICT DO NOTHING;
+
+-- name: DeleteCommentVote :execrows
+DELETE FROM comment_vote
+WHERE content_id = sqlc.arg(content_id) AND user_id = sqlc.arg(user_id) AND comment_id = sqlc.arg(comment_id);
+
+-- name: BumpCommentScore :exec
+UPDATE comment SET score = score + sqlc.arg(delta)
+WHERE content_id = sqlc.arg(content_id) AND id = sqlc.arg(id);
+
+-- name: VotedCommentIDs :many
+SELECT comment_id FROM comment_vote
+WHERE content_id = sqlc.arg(content_id) AND user_id = sqlc.arg(user_id)
+  AND comment_id = ANY (sqlc.arg(ids)::bigint[]);
+
+-- Account erase: the reader's votes go, and each comment they voted for loses one point (the
+-- key allows one vote per reader per comment, so each comment appears once).
+-- name: DeleteUserCommentVotes :exec
+WITH gone AS (
+    DELETE FROM comment_vote WHERE user_id = $1 RETURNING content_id, comment_id
+)
+UPDATE comment c SET score = c.score - 1
+FROM gone
+WHERE c.content_id = gone.content_id AND c.id = gone.comment_id;

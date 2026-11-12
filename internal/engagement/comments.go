@@ -42,6 +42,7 @@ type Comment struct {
 	Body       string           `json:"body"`   // empty for deleted comments
 	Deleted    bool             `json:"deleted"`
 	ReplyCount int32            `json:"replyCount"`
+	Score      int32            `json:"score"` // readers who marked it helpful; 0 for deleted comments
 	CreatedAt  time.Time        `json:"createdAt"`
 	EditedAt   *time.Time       `json:"editedAt"`
 }
@@ -362,7 +363,7 @@ func (s *Service) hydrate(ctx context.Context, rows []engagementdb.Comment) ([]C
 			ReplyCount: r.ReplyCount, CreatedAt: r.CreatedAt, EditedAt: r.EditedAt}
 		if CommentStatus(r.Status) == CommentVisible {
 			a := authors[r.AuthorID]
-			c.Author, c.Body = &a, r.BodyMd
+			c.Author, c.Body, c.Score = &a, r.BodyMd, r.Score
 		} else {
 			c.Deleted = true
 		}

@@ -47,6 +47,9 @@ func (h *Handler) Routes(mux *http.ServeMux, authed func(http.Handler) http.Hand
 	me("PUT /v1/me/comments/{contentId}/{commentId}", l.Comments, h.editComment)
 	me("DELETE /v1/me/comments/{contentId}/{commentId}", l.Actions, h.deleteComment)
 	me("POST /v1/me/comments/{contentId}/{commentId}/report", l.Comments, h.report)
+	me("PUT /v1/me/comments/{contentId}/{commentId}/vote", l.Actions, h.vote)
+	me("DELETE /v1/me/comments/{contentId}/{commentId}/vote", l.Actions, h.unvote)
+	me("GET /v1/me/comment-votes/{contentId}", l.Actions, h.votes)
 
 	mux.Handle("GET /v1/public/threads/{contentId}", httpx.HandlerFunc(h.thread))
 	mux.Handle("GET /v1/public/threads/{contentId}/{rootId}/replies", httpx.HandlerFunc(h.replies))
@@ -270,6 +273,49 @@ func (h *Handler) report(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	httpx.NoContent(w)
+	return nil
+}
+
+func (h *Handler) vote(w http.ResponseWriter, r *http.Request) error {
+	contentID, commentID, err := commentIDs(r)
+	if err != nil {
+		return err
+	}
+	if err := h.svc.VoteComment(r.Context(), principal(r), contentID, commentID); err != nil {
+		return err
+	}
+	httpx.NoContent(w)
+	return nil
+}
+
+func (h *Handler) unvote(w http.ResponseWriter, r *http.Request) error {
+	contentID, commentID, err := commentIDs(r)
+	if err != nil {
+		return err
+	}
+	if err := h.svc.UnvoteComment(r.Context(), principal(r), contentID, commentID); err != nil {
+		return err
+	}
+	httpx.NoContent(w)
+	return nil
+}
+
+// votes: GET /v1/me/comment-votes/{contentId}?ids=1,2,3 — which of these the caller voted for.
+func (h *Handler) votes(w http.ResponseWriter, r *http.Request) error {
+	contentID, err := httpx.PathID(r, "contentId")
+	if err != nil {
+		return err
+	}
+	ids, err := parseIDs(r.URL.Query().Get("ids"))
+	if err != nil {
+		return err
+	}
+	voted, err := h.svc.VotedComments(r.Context(), principal(r), contentID, ids)
+	if err != nil {
+		return err
+	}
+	noStore(w)
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": voted})
 	return nil
 }
 

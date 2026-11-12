@@ -105,6 +105,22 @@ func (q *Queries) BookmarkStates(ctx context.Context, arg BookmarkStatesParams) 
 	return items, nil
 }
 
+const bumpCommentScore = `-- name: BumpCommentScore :exec
+UPDATE comment SET score = score + $1
+WHERE content_id = $2 AND id = $3
+`
+
+type BumpCommentScoreParams struct {
+	Delta     int32
+	ContentID int64
+	ID        int64
+}
+
+func (q *Queries) BumpCommentScore(ctx context.Context, arg BumpCommentScoreParams) error {
+	_, err := q.db.Exec(ctx, bumpCommentScore, arg.Delta, arg.ContentID, arg.ID)
+	return err
+}
+
 const bumpReplyCount = `-- name: BumpReplyCount :exec
 UPDATE comment SET reply_count = reply_count + $1 WHERE content_id = $2 AND id = $3
 `
@@ -193,6 +209,25 @@ func (q *Queries) DeleteBookmarkList(ctx context.Context, arg DeleteBookmarkList
 	return result.RowsAffected(), nil
 }
 
+const deleteCommentVote = `-- name: DeleteCommentVote :execrows
+DELETE FROM comment_vote
+WHERE content_id = $1 AND user_id = $2 AND comment_id = $3
+`
+
+type DeleteCommentVoteParams struct {
+	ContentID int64
+	UserID    int64
+	CommentID int64
+}
+
+func (q *Queries) DeleteCommentVote(ctx context.Context, arg DeleteCommentVoteParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteCommentVote, arg.ContentID, arg.UserID, arg.CommentID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteReaction = `-- name: DeleteReaction :execrows
 DELETE FROM reaction WHERE content_id = $1 AND user_id = $2
 `
@@ -241,6 +276,22 @@ func (q *Queries) DeleteUserBookmarks(ctx context.Context, userID int64) ([]int6
 		return nil, err
 	}
 	return items, nil
+}
+
+const deleteUserCommentVotes = `-- name: DeleteUserCommentVotes :exec
+WITH gone AS (
+    DELETE FROM comment_vote WHERE user_id = $1 RETURNING content_id, comment_id
+)
+UPDATE comment c SET score = c.score - 1
+FROM gone
+WHERE c.content_id = gone.content_id AND c.id = gone.comment_id
+`
+
+// Account erase: the reader's votes go, and each comment they voted for loses one point (the
+// key allows one vote per reader per comment, so each comment appears once).
+func (q *Queries) DeleteUserCommentVotes(ctx context.Context, userID int64) error {
+	_, err := q.db.Exec(ctx, deleteUserCommentVotes, userID)
+	return err
 }
 
 const deleteUserReactions = `-- name: DeleteUserReactions :many
@@ -520,6 +571,28 @@ func (q *Queries) InsertCommentReport(ctx context.Context, arg InsertCommentRepo
 		arg.Reason,
 		arg.Note,
 	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const insertCommentVote = `-- name: InsertCommentVote :execrows
+
+INSERT INTO comment_vote (content_id, user_id, comment_id)
+VALUES ($1, $2, $3)
+ON CONFLICT DO NOTHING
+`
+
+type InsertCommentVoteParams struct {
+	ContentID int64
+	UserID    int64
+	CommentID int64
+}
+
+// ── Comment votes ───────────────────────────────────────────────────────────
+func (q *Queries) InsertCommentVote(ctx context.Context, arg InsertCommentVoteParams) (int64, error) {
+	result, err := q.db.Exec(ctx, insertCommentVote, arg.ContentID, arg.UserID, arg.CommentID)
 	if err != nil {
 		return 0, err
 	}
@@ -987,4 +1060,36 @@ type SetCommentStatusParams struct {
 func (q *Queries) SetCommentStatus(ctx context.Context, arg SetCommentStatusParams) error {
 	_, err := q.db.Exec(ctx, setCommentStatus, arg.ContentID, arg.ID, arg.Status)
 	return err
+}
+
+const votedCommentIDs = `-- name: VotedCommentIDs :many
+SELECT comment_id FROM comment_vote
+WHERE content_id = $1 AND user_id = $2
+  AND comment_id = ANY ($3::bigint[])
+`
+
+type VotedCommentIDsParams struct {
+	ContentID int64
+	UserID    int64
+	Ids       []int64
+}
+
+func (q *Queries) VotedCommentIDs(ctx context.Context, arg VotedCommentIDsParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, votedCommentIDs, arg.ContentID, arg.UserID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var comment_id int64
+		if err := rows.Scan(&comment_id); err != nil {
+			return nil, err
+		}
+		items = append(items, comment_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
