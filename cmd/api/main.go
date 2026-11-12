@@ -32,6 +32,7 @@ import (
 	"code-sprout-cms/internal/platform/ratelimit"
 	"code-sprout-cms/internal/platform/storage"
 	"code-sprout-cms/internal/problem"
+	"code-sprout-cms/internal/quiz"
 	"code-sprout-cms/internal/roles"
 	"code-sprout-cms/internal/search"
 	"code-sprout-cms/internal/submission"
@@ -98,6 +99,7 @@ func run() error {
 		bucketSearch      bucket = "search"
 		bucketRuns        bucket = "runs"
 		bucketSubmissions bucket = "submissions"
+		bucketQuizzes     bucket = "quizzes"
 	)
 	rl := func(name bucket, limit ratelimit.Limit) httpx.Middleware {
 		return limiter.Middleware(string(name), limit, identify)
@@ -106,7 +108,7 @@ func run() error {
 	api := http.NewServeMux()
 	user.NewHandler(users).Routes(api, auth.RequireUser)
 	account.NewHandler(account.NewService(database, users.Forget,
-		engagement.EraseUser, library.EraseUser, library.EraseUserReading, submission.EraseUser, collection.EraseUser, access.EraseUser, asset.EraseUser, users.EraseUser,
+		engagement.EraseUser, library.EraseUser, library.EraseUserReading, submission.EraseUser, quiz.EraseUser, collection.EraseUser, access.EraseUser, asset.EraseUser, users.EraseUser,
 	)).Routes(api, auth.RequireUser)
 	taxonomy.NewHandler(taxonomies).Routes(api, auth.RequireUser)
 	asset.NewHandler(assets).Routes(api, auth.RequireUser,
@@ -134,6 +136,8 @@ func run() error {
 	search.NewHandler(searchIndex, search.NewIndexer(searchIndex, reader, problems, enqueue), policy).Routes(api, auth.RequireUser,
 		rl(bucketSearch, ratelimit.PerMinute(60, 20)))
 	problem.NewHandler(problems).Routes(api, auth.RequireUser)
+	// Grading writes an attempt; a reader takes a quiz in minutes, so this is generous.
+	quiz.NewHandler(quiz.NewService(database, contents, reader)).Routes(api, auth.RequireUser, rl(bucketQuizzes, ratelimit.PerMinute(20, 5)))
 	video.NewHandler(video.NewService(database, reader)).Routes(api)
 	submissions := submission.NewService(database, rdb, judge.New(cfg.Judge.URL, cfg.Judge.APIKey, cfg.Judge.Runtimes), problems, problems, reader)
 	submission.NewHandler(submissions, identify).Routes(api, auth.RequireUser, submission.Limits{
