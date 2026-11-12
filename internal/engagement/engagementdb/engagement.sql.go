@@ -146,7 +146,7 @@ func (q *Queries) CountOpenReports(ctx context.Context, commentID int64) (int64,
 }
 
 const countUserBookmarks = `-- name: CountUserBookmarks :one
-SELECT COALESCE((SELECT bookmark_count::bigint FROM user_stats WHERE user_id = $1), 0::bigint)
+SELECT COALESCE((SELECT bookmark_count FROM user_stats WHERE user_id = $1), 0)::bigint AS bookmark_count
 `
 
 // Reads from user_stats (migration 00018) — a denormalised counter maintained by the
@@ -154,9 +154,9 @@ SELECT COALESCE((SELECT bookmark_count::bigint FROM user_stats WHERE user_id = $
 // of a user whose first-ever bookmark hasn't yet inserted (no row in user_stats yet).
 func (q *Queries) CountUserBookmarks(ctx context.Context, userID int64) (int64, error) {
 	row := q.db.QueryRow(ctx, countUserBookmarks, userID)
-	var coalesce int64
-	err := row.Scan(&coalesce)
-	return coalesce, err
+	var bookmark_count int64
+	err := row.Scan(&bookmark_count)
+	return bookmark_count, err
 }
 
 const deleteBookmark = `-- name: DeleteBookmark :execrows

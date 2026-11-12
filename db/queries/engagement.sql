@@ -54,7 +54,7 @@ DELETE FROM bookmark WHERE user_id = $1 AND content_id = $2;
 -- bookmark_user_stats_sync trigger. O(1) instead of O(rows). COALESCE handles the rare case
 -- of a user whose first-ever bookmark hasn't yet inserted (no row in user_stats yet).
 -- name: CountUserBookmarks :one
-SELECT COALESCE((SELECT bookmark_count::bigint FROM user_stats WHERE user_id = $1), 0::bigint);
+SELECT COALESCE((SELECT bookmark_count FROM user_stats WHERE user_id = $1), 0)::bigint AS bookmark_count;
 
 -- name: BookmarkStates :many
 SELECT content_id, list_id FROM bookmark WHERE user_id = sqlc.arg(user_id) AND content_id = ANY (sqlc.arg(ids)::bigint[]);

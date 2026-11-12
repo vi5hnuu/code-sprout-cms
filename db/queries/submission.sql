@@ -82,7 +82,7 @@ SELECT problem_id FROM user_problem WHERE user_id = $1 AND first_solved_at IS NO
 -- Reads from user_stats (migration 00018) — a denormalised counter maintained by the
 -- submission_user_stats_sync trigger. O(1) instead of a 32-partition fan-out count.
 -- name: CountUserSubmissions :one
-SELECT COALESCE((SELECT submission_count::bigint FROM user_stats WHERE user_id = $1), 0::bigint);
+SELECT COALESCE((SELECT submission_count FROM user_stats WHERE user_id = $1), 0)::bigint AS submission_count;
 
 -- name: ActivitySince :many
 SELECT day, submissions, accepted FROM user_activity_day WHERE user_id = $1 AND day >= $2 ORDER BY day;
