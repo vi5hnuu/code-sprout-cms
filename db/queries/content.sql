@@ -125,6 +125,11 @@ SELECT sqlc.arg(from_id), sqlc.arg(kind), t.id, t.pos::int
 FROM unnest(sqlc.arg(to_ids)::bigint[]) WITH ORDINALITY AS t(id, pos)
 ON CONFLICT DO NOTHING;
 
+-- Which of these ids are published items of this type (embedded quizzes at publish time).
+-- name: LiveIDsOfType :many
+SELECT id FROM content
+WHERE type = sqlc.arg(type) AND id = ANY (sqlc.arg(ids)::bigint[]) AND status = 'PUBLISHED' AND deleted_at IS NULL;
+
 -- name: LiveIDsBySlug :many
 SELECT id, slug FROM content
 WHERE type = sqlc.arg(type) AND locale = sqlc.arg(locale) AND slug = ANY (sqlc.arg(slugs)::text[])
