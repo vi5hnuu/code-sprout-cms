@@ -485,6 +485,11 @@ paths:
           required: false
           description: Keep only items of this type (ARTICLE, BLOG, TOPIC_PAGE, PROBLEM, VIDEO, QUIZ). Omit to list every type.
           schema: { $ref: "#/components/schemas/ContentType" }
+        - in: query
+          name: status
+          required: false
+          description: Keep only items in this state (DRAFT, PUBLISHED, ARCHIVED). Omit to list every state.
+          schema: { $ref: "#/components/schemas/ContentStatus" }
       responses:
         "200":
           description: Page of items

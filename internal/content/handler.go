@@ -131,17 +131,26 @@ func (h *Handler) listMine(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	// Optional `?type=` filter — validated against the known content types so an unknown value
-	// is a 400 instead of silently returning everything (what the bug was: callers assumed the
-	// filter worked, but the server ignored it).
-	var filter Type
+	// Optional `?type=` and `?status=` filters, validated against the known values so an
+	// unknown one is a 400 instead of silently returning everything (callers once assumed the
+	// type filter worked while the server ignored it).
+	var filter MineFilter
 	if raw := strings.TrimSpace(r.URL.Query().Get("type")); raw != "" {
 		t := Type(strings.ToUpper(raw))
 		switch t {
 		case TypeArticle, TypeBlog, TypeTopicPage, TypeProblem, TypeQuiz, TypeVideo:
-			filter = t
+			filter.Type = t
 		default:
 			return apperr.ValidationFailed(map[string]string{"type": "unknown content type"})
+		}
+	}
+	if raw := strings.TrimSpace(r.URL.Query().Get("status")); raw != "" {
+		st := Status(strings.ToUpper(raw))
+		switch st {
+		case StatusDraft, StatusPublished, StatusArchived:
+			filter.Status = st
+		default:
+			return apperr.ValidationFailed(map[string]string{"status": "status must be DRAFT, PUBLISHED or ARCHIVED"})
 		}
 	}
 	res, err := h.svc.ListMine(r.Context(), principal(r), filter, req)
