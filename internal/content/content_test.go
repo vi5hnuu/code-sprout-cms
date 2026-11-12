@@ -416,9 +416,11 @@ func TestScheduledPublishing(t *testing.T) {
 	if g, _ := f.svc.Get(ctx, f.editor, good.ID); g.Status != StatusPublished || g.ScheduledAt != nil {
 		t.Fatalf("scheduled item not published: %+v", g)
 	}
+	// Both fail validation (quarantined image, taken slug), so both go back to the author as
+	// CHANGES_REQUESTED instead of re-failing every tick (see PublishDue).
 	for _, d := range []Draft{broken, clash} {
-		if b, _ := f.svc.Get(ctx, f.editor, d.ID); b.Status != StatusDraft || b.ReviewState != ReviewApproved {
-			t.Fatalf("failed item %d should fall back to APPROVED: %s/%s", d.ID, b.Status, b.ReviewState)
+		if b, _ := f.svc.Get(ctx, f.editor, d.ID); b.Status != StatusDraft || b.ReviewState != ReviewChangesRequested {
+			t.Fatalf("failed item %d should go back to the author as CHANGES_REQUESTED: %s/%s", d.ID, b.Status, b.ReviewState)
 		}
 	}
 	if f.count("SELECT count(*) FROM audit_log WHERE entity_id=$1 AND action='content.schedule_failed' AND actor_id IS NULL", broken.ID) != 1 {
