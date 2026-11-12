@@ -121,3 +121,26 @@ func PathID(r *http.Request, name string) (int64, error) {
 	}
 	return id, nil
 }
+
+// QueryIDs parses a comma-separated list of positive int64 ids from the query parameter
+// `name` (e.g. ?ids=12,40,77), at most max of them. A missing or empty parameter is an empty
+// list. Used by the "my state on these items" endpoints that client islands call per page.
+func QueryIDs(r *http.Request, name string, max int) ([]int64, error) {
+	raw := r.URL.Query().Get(name)
+	if raw == "" {
+		return []int64{}, nil
+	}
+	parts := strings.Split(raw, ",")
+	if len(parts) > max {
+		return nil, apperr.ValidationFailed(map[string]string{name: fmt.Sprintf("At most %d ids.", max)})
+	}
+	ids := make([]int64, 0, len(parts))
+	for _, part := range parts {
+		id, err := strconv.ParseInt(strings.TrimSpace(part), 10, 64)
+		if err != nil || id <= 0 {
+			return nil, apperr.ValidationFailed(map[string]string{name: name + " must be comma-separated positive integers."})
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
+}

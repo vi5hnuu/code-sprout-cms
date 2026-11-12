@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -266,18 +265,9 @@ func (s *Progress) list(w http.ResponseWriter, r *http.Request) error {
 
 // states: GET /v1/me/reading-state?ids=1,2,3
 func (s *Progress) states(w http.ResponseWriter, r *http.Request) error {
-	var ids []int64
-	if raw := r.URL.Query().Get("ids"); raw != "" {
-		for _, part := range strings.Split(raw, ",") {
-			id, err := strconv.ParseInt(strings.TrimSpace(part), 10, 64)
-			if err != nil || id <= 0 {
-				return apperr.ValidationFailed(map[string]string{"ids": "ids must be comma-separated positive integers."})
-			}
-			ids = append(ids, id)
-			if len(ids) > maxReadingIDs {
-				return apperr.ValidationFailed(map[string]string{"ids": fmt.Sprintf("At most %d ids.", maxReadingIDs)})
-			}
-		}
+	ids, err := httpx.QueryIDs(r, "ids", maxReadingIDs)
+	if err != nil {
+		return err
 	}
 	p, _ := auth.FromContext(r.Context())
 	res, err := s.States(r.Context(), p, ids)

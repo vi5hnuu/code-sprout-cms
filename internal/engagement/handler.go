@@ -3,7 +3,6 @@ package engagement
 import (
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"code-sprout-cms/internal/auth"
@@ -163,7 +162,7 @@ func (h *Handler) deleteList(w http.ResponseWriter, r *http.Request) error {
 
 // state: GET /v1/me/state?ids=1,2,3
 func (h *Handler) state(w http.ResponseWriter, r *http.Request) error {
-	ids, err := parseIDs(r.URL.Query().Get("ids"))
+	ids, err := httpx.QueryIDs(r, "ids", maxStateIDs)
 	if err != nil {
 		return err
 	}
@@ -174,25 +173,6 @@ func (h *Handler) state(w http.ResponseWriter, r *http.Request) error {
 	noStore(w)
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": st})
 	return nil
-}
-
-func parseIDs(raw string) ([]int64, error) {
-	if raw == "" {
-		return []int64{}, nil
-	}
-	parts := strings.Split(raw, ",")
-	if len(parts) > maxStateIDs {
-		return nil, apperr.ValidationFailed(map[string]string{"ids": "At most 100 ids."})
-	}
-	ids := make([]int64, 0, len(parts))
-	for _, p := range parts {
-		id, err := strconv.ParseInt(strings.TrimSpace(p), 10, 64)
-		if err != nil || id <= 0 {
-			return nil, apperr.ValidationFailed(map[string]string{"ids": "ids must be comma-separated positive integers."})
-		}
-		ids = append(ids, id)
-	}
-	return ids, nil
 }
 
 type commentInput struct {
@@ -306,7 +286,7 @@ func (h *Handler) votes(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	ids, err := parseIDs(r.URL.Query().Get("ids"))
+	ids, err := httpx.QueryIDs(r, "ids", maxStateIDs)
 	if err != nil {
 		return err
 	}
