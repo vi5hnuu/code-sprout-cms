@@ -17,11 +17,11 @@ import (
 // of silently leaking that reader's personal data on account deletion.
 //
 // How to make a failure pass:
-//   1. If the new table is personal data: add a DELETE query, a `EraseUser` function in the
-//      owning domain, and register it in `cmd/api/main.go`'s `account.NewService(...)` call.
-//      Then add the table to `expectedCoveredTables` below.
-//   2. If the column really isn't personal (e.g. "created by admin" audit metadata that stays
-//      with the content), add the table to `nonPersonalColumns` with a comment explaining why.
+//  1. If the new table is personal data: add a DELETE query, a `EraseUser` function in the
+//     owning domain, and register it in `cmd/api/main.go`'s `account.NewService(...)` call.
+//     Then add the table to `expectedCoveredTables` below.
+//  2. If the column really isn't personal (e.g. "created by admin" audit metadata that stays
+//     with the content), add the table to `nonPersonalColumns` with a comment explaining why.
 //
 // The allow-list style makes "new column that we missed" the loud default instead of silently
 // true-adding to the list.
@@ -33,10 +33,14 @@ func TestEraserCoversEveryUserTiedTable(t *testing.T) {
 		SELECT c.table_name, c.column_name
 		FROM information_schema.columns c
 		JOIN information_schema.tables  t ON t.table_schema = c.table_schema AND t.table_name = c.table_name
+		JOIN pg_namespace n ON n.nspname = c.table_schema
+		JOIN pg_class     r ON r.relnamespace = n.oid AND r.relname = c.table_name
 		WHERE c.table_schema = 'public'
 		  AND t.table_type   = 'BASE TABLE'
-		  -- hash-partition children (comment_pNN, reaction_pNN, user_note_pNN, …) inherit the parent
-		  AND c.table_name !~ '_p[0-9]+$'
+		  -- Partitions (hash children like comment_p07, monthly ones like audit_log_y2026m11)
+		  -- are covered by their parent's eraser; asking the catalog, not matching names, keeps
+		  -- any future partitioning scheme out of this list.
+		  AND NOT r.relispartition
 		  AND c.column_name IN ('user_id', 'author_id', 'editor_id', 'actor_id', 'owner_id', 'reviewer_id')
 		ORDER BY c.table_name, c.column_name;`)
 	if err != nil {
@@ -84,23 +88,24 @@ var expectedCoveredTables = map[string]map[string]string{
 		// users.EraseUser anonymises display name / email / avatar and detaches google_sub.
 		"id": "internal/user/service.go EraseUser",
 	},
-	"bookmark":           {"user_id": "internal/library/erase.go"},
-	"bookmark_list":      {"user_id": "internal/library/erase.go"},
-	"reaction":           {"user_id": "internal/engagement/erase.go"},
-	"user_note":          {"user_id": "internal/library/erase.go"},
-	"user_review":        {"user_id": "internal/library/erase.go"},
-	"user_problem":       {"user_id": "internal/submission/erase.go"},
-	"user_activity_day":  {"user_id": "internal/library/erase.go"},
-	"user_stats":         {"user_id": "cascades via FK ON DELETE CASCADE from app_user, and the bookmark/submission triggers decrement to 0 as the per-table erasers DELETE rows"},
-	"submission":         {"user_id": "internal/submission/erase.go"},
-	"comment":            {"author_id": "internal/engagement/erase.go (anonymises visible, deletes drafts)"},
-	"content":            {"author_id": "stays, re-attributed to 'former-member' at erase time"},
-	"content_revision":   {"editor_id": "stays — revisions are history; editor_id is 'former-member' after erase"},
-	"audit_log":          {"actor_id": "stays — audit trail is append-only; actor_id is 'former-member' after erase"},
-	"cms_role_grant":     {"user_id": "internal/access/erase.go — role grants deleted"},
-	"collection":         {"owner_id": "internal/collection/erase.go — collections re-owned by former-member or deleted"},
-	"file":               {"owner_id": "internal/asset/erase.go — avatars MARKED DELETING; article images stay (public, immutable asset-id refs)"},
-	"comment_report":     {"reporter_id": "internal/engagement/erase.go"},
+	"bookmark":          {"user_id": "internal/library/erase.go"},
+	"bookmark_list":     {"user_id": "internal/library/erase.go"},
+	"reaction":          {"user_id": "internal/engagement/erase.go"},
+	"user_note":         {"user_id": "internal/library/erase.go"},
+	"user_review":       {"user_id": "internal/library/erase.go"},
+	"user_problem":      {"user_id": "internal/submission/erase.go"},
+	"user_activity_day": {"user_id": "internal/library/erase.go"},
+	"user_stats":        {"user_id": "cascades via FK ON DELETE CASCADE from app_user, and the bookmark/submission triggers decrement to 0 as the per-table erasers DELETE rows"},
+	"submission":        {"user_id": "internal/submission/erase.go"},
+	"comment":           {"author_id": "internal/engagement/erase.go (anonymises visible, deletes drafts)"},
+	"content":           {"author_id": "stays, re-attributed to 'former-member' at erase time"},
+	"content_revision":  {"editor_id": "stays — revisions are history; editor_id is 'former-member' after erase"},
+	"audit_log":         {"actor_id": "stays — audit trail is append-only; actor_id is 'former-member' after erase"},
+	"review":            {"reviewer_id": "stays — editorial history beside content_revision; reviewer_id points at the anonymised app_user row"},
+	"cms_role_grant":    {"user_id": "internal/access/erase.go — role grants deleted"},
+	"collection":        {"owner_id": "internal/collection/erase.go — collections re-owned by former-member or deleted"},
+	"file":              {"owner_id": "internal/asset/erase.go — avatars MARKED DELETING; article images stay (public, immutable asset-id refs)"},
+	"comment_report":    {"reporter_id": "internal/engagement/erase.go"},
 }
 
 // nonPersonalColumns are deliberately kept after erase. Document the reason inline.
