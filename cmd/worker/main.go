@@ -21,6 +21,7 @@ import (
 	"code-sprout-cms/internal/delivery"
 	"code-sprout-cms/internal/engagement"
 	"code-sprout-cms/internal/judge"
+	"code-sprout-cms/internal/library"
 	"code-sprout-cms/internal/maintenance"
 	"code-sprout-cms/internal/outbox"
 	"code-sprout-cms/internal/platform/config"
@@ -169,6 +170,12 @@ func run() error {
 	wg.Go(func() {
 		maintenance.Every(ctx, "audit-log-prune", 24*time.Hour, func(ctx context.Context) error {
 			return maintenance.PruneAuditLog(ctx, database.Primary)
+		})
+	})
+	wg.Go(func() {
+		// Weekly: the prune scans each partition for year-old positions, so it runs rarely.
+		maintenance.Every(ctx, "reading-prune", 7*24*time.Hour, func(ctx context.Context) error {
+			return library.NewProgress(database, reader).Prune(ctx)
 		})
 	})
 

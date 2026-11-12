@@ -1786,6 +1786,90 @@ paths:
         "401": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
 
+  /v1/me/reading:
+    get:
+      tags: [library]
+      operationId: listReading
+      summary: Pages you are reading (most recently read first) or have finished (most recently finished first).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+        - in: query
+          name: state
+          required: false
+          description: in-progress (default) or finished. A cursor only continues the list it came from.
+          schema: { type: string, enum: [in-progress, finished], default: in-progress }
+      responses:
+        "200":
+          description: Page of reading entries
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/Reading" } }
+                  nextCursor: { type: [string, "null"] }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+  /v1/me/reading/{contentId}:
+    parameters: [{ $ref: "#/components/parameters/ContentID" }]
+    put:
+      tags: [library]
+      operationId: saveReading
+      summary: Save where you are on a live page (latest position wins; finishing is kept once reached).
+      description: Clients save when the reader moves to another section, at most every 15 seconds, and once when the page is hidden.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [percent]
+              additionalProperties: false
+              properties:
+                headingId: { type: [string, "null"], maxLength: 200, description: Anchor of the section in view; null for the top of the page. }
+                percent: { type: integer, minimum: 0, maximum: 100 }
+      responses:
+        "200":
+          description: Saved position
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReadingPosition" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+    delete:
+      tags: [library]
+      operationId: forgetReading
+      summary: Remove a page from your reading lists.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Removed }
+        "401": { $ref: "#/components/responses/Problem" }
+  /v1/me/reading-state:
+    get:
+      tags: [library]
+      operationId: getReadingState
+      summary: Your positions on up to 100 pages; pages never opened are absent.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: ids, in: query, required: true, description: Comma-separated content ids., schema: { type: string }, example: "12,40" }
+      responses:
+        "200":
+          description: Positions
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/ReadingPosition" } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
   /v1/me/notes:
     get:
       tags: [library]
@@ -2751,6 +2835,22 @@ components:
                 - type: "null"
                 - $ref: "#/components/schemas/File"
         stats: { $ref: "#/components/schemas/Stats" }
+    ReadingPosition:
+      type: object
+      required: [contentId, headingId, percent, updatedAt, finishedAt]
+      properties:
+        contentId: { type: integer, format: int64 }
+        headingId: { type: [string, "null"], description: Section anchor to resume at; null for the top. }
+        percent: { type: integer }
+        updatedAt: { type: string, format: date-time }
+        finishedAt: { type: [string, "null"], format: date-time, description: When the reader first passed 90%; kept once set. }
+    Reading:
+      allOf:
+        - { $ref: "#/components/schemas/ReadingPosition" }
+        - type: object
+          required: [item]
+          properties:
+            item: { $ref: "#/components/schemas/ListItem" }
     ListItem:
       type: object
       required: [id, type, locale, slug, title, summary, access, publishedAt, lastPublishedAt, readingMinutes, category, author, stats, cover]

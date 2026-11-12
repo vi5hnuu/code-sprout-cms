@@ -8,6 +8,15 @@ import (
 	"time"
 )
 
+type ReadingProgress struct {
+	UserID     int64
+	ContentID  int64
+	HeadingID  *string
+	Percent    int16
+	UpdatedAt  time.Time
+	FinishedAt *time.Time
+}
+
 type UserNote struct {
 	UserID    int64
 	ContentID int64

@@ -91,6 +91,7 @@ var expectedCoveredTables = map[string]map[string]string{
 	"bookmark":          {"user_id": "internal/library/erase.go"},
 	"bookmark_list":     {"user_id": "internal/library/erase.go"},
 	"reaction":          {"user_id": "internal/engagement/erase.go"},
+	"reading_progress":  {"user_id": "internal/library/erase.go EraseUserReading"},
 	"user_note":         {"user_id": "internal/library/erase.go"},
 	"user_review":       {"user_id": "internal/library/erase.go"},
 	"user_problem":      {"user_id": "internal/submission/erase.go"},

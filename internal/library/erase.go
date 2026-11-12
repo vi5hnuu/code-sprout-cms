@@ -12,3 +12,9 @@ import (
 func EraseUser(ctx context.Context, tx pgx.Tx, userID int64) error {
 	return librarydb.New(tx).DeleteUserNotes(ctx, userID)
 }
+
+// EraseUserReading deletes a reader's reading positions (account erase), inside the caller's
+// transaction.
+func EraseUserReading(ctx context.Context, tx pgx.Tx, userID int64) error {
+	return librarydb.New(tx).DeleteUserReading(ctx, userID)
+}

@@ -106,7 +106,7 @@ func run() error {
 	api := http.NewServeMux()
 	user.NewHandler(users).Routes(api, auth.RequireUser)
 	account.NewHandler(account.NewService(database, users.Forget,
-		engagement.EraseUser, library.EraseUser, submission.EraseUser, collection.EraseUser, access.EraseUser, asset.EraseUser, users.EraseUser,
+		engagement.EraseUser, library.EraseUser, library.EraseUserReading, submission.EraseUser, collection.EraseUser, access.EraseUser, asset.EraseUser, users.EraseUser,
 	)).Routes(api, auth.RequireUser)
 	taxonomy.NewHandler(taxonomies).Routes(api, auth.RequireUser)
 	asset.NewHandler(assets).Routes(api, auth.RequireUser,
@@ -120,6 +120,7 @@ func run() error {
 	})
 	library.NewHandler(engagements, reader).Routes(api, auth.RequireUser)
 	library.NewNotes(database, reader).Routes(api, auth.RequireUser)
+	library.NewProgress(database, reader).Routes(api, auth.RequireUser, rl(bucketActions, ratelimit.PerMinute(120, 30)))
 	collection.NewHandler(collection.NewService(database, reader, policy)).Routes(api, auth.RequireUser)
 	roles.NewHandler(access.NewGrants(database, policy), users, taxonomies).Routes(api, auth.RequireUser)
 
