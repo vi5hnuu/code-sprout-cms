@@ -497,3 +497,40 @@ func TestThreadTopOrder(t *testing.T) {
 		t.Fatalf("after the deleted root = %+v, %v; want [%d %d]", rest.Items, err, ids[2], ids[1])
 	}
 }
+
+// Parallel votes on one comment (many readers, plus one reader double-clicking) leave the
+// score equal to the number of distinct voters.
+func TestConcurrentVotesKeepScoreExact(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	id := e.item()
+	c, err := e.svc.CreateComment(ctx, testenv.User(t, e.d), id, nil, "popular")
+	if err != nil {
+		t.Fatal(err)
+	}
+	voters := make([]auth.Principal, 20)
+	for i := range voters {
+		voters[i] = testenv.User(t, e.d)
+	}
+	var wg sync.WaitGroup
+	errs := make(chan error, len(voters)*3)
+	for _, v := range voters {
+		for range 3 {
+			wg.Go(func() { errs <- e.svc.VoteComment(ctx, v, id, c.ID) })
+		}
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	var score int32
+	if err := e.d.Primary.QueryRow(ctx, "SELECT score FROM comment WHERE content_id = $1 AND id = $2", id, c.ID).Scan(&score); err != nil {
+		t.Fatal(err)
+	}
+	if score != int32(len(voters)) {
+		t.Fatalf("score = %d, want %d", score, len(voters))
+	}
+}
