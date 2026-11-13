@@ -5,6 +5,24 @@
 # an INTERNAL_PROXY_SECRET header, so the API is not reached from the public internet
 # through this snippet.
 encode zstd gzip
+
+# Page HTML never goes into a shared cache. One URL serves English or Hindi chrome depending on
+# the reader (the cs_lang cookie, else the browser's first language; see the web's
+# i18n/negotiate.ts), so a shared cache keyed on the URL alone would show one reader's language
+# to the next. Next.js's own cache (ISR, server side) is unaffected; browsers revalidate as
+# before, and back/forward cache still works (only no-store disables it). Deferred (>) so it
+# replaces the s-maxage Next sets on cached pages. Assets, the API, OG and generated metadata
+# images, feeds, sitemaps and the service worker keep their own headers.
+#
+# If a CDN is ever put in front of HTML, replace this with the edge contract instead: compute the
+# language at the edge, key the cache on (path, language) and send it as X-UI-Locale.
+@pages {
+    not path /_next/* /api/* /og/* /.well-known/* /icons/* /sitemaps/* /sitemap.xml /feed.xml /blog/feed.xml /robots.txt /sw.js /offline.html /manifest.webmanifest /favicon.ico
+    not path *.js *.css *.map *.png *.jpg *.jpeg *.gif *.webp *.avif *.svg *.ico *.txt *.xml *.json *.woff *.woff2
+    # Next's generated per-page images (opengraph-image, twitter-image, icon): the same for every reader.
+    not path_regexp /(opengraph-image|twitter-image|icon|apple-icon)[^/]*$
+}
+header @pages >Cache-Control "private, no-cache"
 reverse_proxy 127.0.0.1:4410 {
     # The reader's address, for rate limits and view counts (CLIENT_IP_HEADER=x-real-ip
     # in the web container). {client_ip} honours Caddy's global trusted_proxies setting.
