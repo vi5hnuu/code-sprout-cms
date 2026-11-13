@@ -105,6 +105,22 @@ func (q *Queries) BookmarkStates(ctx context.Context, arg BookmarkStatesParams) 
 	return items, nil
 }
 
+const bumpCommentScore = `-- name: BumpCommentScore :exec
+UPDATE comment SET score = score + $1
+WHERE content_id = $2 AND id = $3
+`
+
+type BumpCommentScoreParams struct {
+	Delta     int32
+	ContentID int64
+	ID        int64
+}
+
+func (q *Queries) BumpCommentScore(ctx context.Context, arg BumpCommentScoreParams) error {
+	_, err := q.db.Exec(ctx, bumpCommentScore, arg.Delta, arg.ContentID, arg.ID)
+	return err
+}
+
 const bumpReplyCount = `-- name: BumpReplyCount :exec
 UPDATE comment SET reply_count = reply_count + $1 WHERE content_id = $2 AND id = $3
 `
@@ -146,7 +162,7 @@ func (q *Queries) CountOpenReports(ctx context.Context, commentID int64) (int64,
 }
 
 const countUserBookmarks = `-- name: CountUserBookmarks :one
-SELECT COALESCE((SELECT bookmark_count::bigint FROM user_stats WHERE user_id = $1), 0::bigint)
+SELECT COALESCE((SELECT bookmark_count FROM user_stats WHERE user_id = $1), 0)::bigint AS bookmark_count
 `
 
 // Reads from user_stats (migration 00018) — a denormalised counter maintained by the
@@ -154,9 +170,9 @@ SELECT COALESCE((SELECT bookmark_count::bigint FROM user_stats WHERE user_id = $
 // of a user whose first-ever bookmark hasn't yet inserted (no row in user_stats yet).
 func (q *Queries) CountUserBookmarks(ctx context.Context, userID int64) (int64, error) {
 	row := q.db.QueryRow(ctx, countUserBookmarks, userID)
-	var coalesce int64
-	err := row.Scan(&coalesce)
-	return coalesce, err
+	var bookmark_count int64
+	err := row.Scan(&bookmark_count)
+	return bookmark_count, err
 }
 
 const deleteBookmark = `-- name: DeleteBookmark :execrows
@@ -187,6 +203,25 @@ type DeleteBookmarkListParams struct {
 
 func (q *Queries) DeleteBookmarkList(ctx context.Context, arg DeleteBookmarkListParams) (int64, error) {
 	result, err := q.db.Exec(ctx, deleteBookmarkList, arg.ID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteCommentVote = `-- name: DeleteCommentVote :execrows
+DELETE FROM comment_vote
+WHERE content_id = $1 AND user_id = $2 AND comment_id = $3
+`
+
+type DeleteCommentVoteParams struct {
+	ContentID int64
+	UserID    int64
+	CommentID int64
+}
+
+func (q *Queries) DeleteCommentVote(ctx context.Context, arg DeleteCommentVoteParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteCommentVote, arg.ContentID, arg.UserID, arg.CommentID)
 	if err != nil {
 		return 0, err
 	}
@@ -241,6 +276,22 @@ func (q *Queries) DeleteUserBookmarks(ctx context.Context, userID int64) ([]int6
 		return nil, err
 	}
 	return items, nil
+}
+
+const deleteUserCommentVotes = `-- name: DeleteUserCommentVotes :exec
+WITH gone AS (
+    DELETE FROM comment_vote WHERE user_id = $1 RETURNING content_id, comment_id
+)
+UPDATE comment c SET score = c.score - 1
+FROM gone
+WHERE c.content_id = gone.content_id AND c.id = gone.comment_id
+`
+
+// Account erase: the reader's votes go, and each comment they voted for loses one point (the
+// key allows one vote per reader per comment, so each comment appears once).
+func (q *Queries) DeleteUserCommentVotes(ctx context.Context, userID int64) error {
+	_, err := q.db.Exec(ctx, deleteUserCommentVotes, userID)
+	return err
 }
 
 const deleteUserReactions = `-- name: DeleteUserReactions :many
@@ -526,6 +577,28 @@ func (q *Queries) InsertCommentReport(ctx context.Context, arg InsertCommentRepo
 	return result.RowsAffected(), nil
 }
 
+const insertCommentVote = `-- name: InsertCommentVote :execrows
+
+INSERT INTO comment_vote (content_id, user_id, comment_id)
+VALUES ($1, $2, $3)
+ON CONFLICT DO NOTHING
+`
+
+type InsertCommentVoteParams struct {
+	ContentID int64
+	UserID    int64
+	CommentID int64
+}
+
+// ── Comment votes ───────────────────────────────────────────────────────────
+func (q *Queries) InsertCommentVote(ctx context.Context, arg InsertCommentVoteParams) (int64, error) {
+	result, err := q.db.Exec(ctx, insertCommentVote, arg.ContentID, arg.UserID, arg.CommentID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const insertReaction = `-- name: InsertReaction :execrows
 
 INSERT INTO reaction (content_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING
@@ -716,6 +789,61 @@ func (q *Queries) ListRootComments(ctx context.Context, arg ListRootCommentsPara
 	rows, err := q.db.Query(ctx, listRootComments,
 		arg.ContentID,
 		arg.AfterCreated,
+		arg.AfterID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Comment{}
+	for rows.Next() {
+		var i Comment
+		if err := rows.Scan(
+			&i.ID,
+			&i.ContentID,
+			&i.RootID,
+			&i.ParentID,
+			&i.AuthorID,
+			&i.BodyMd,
+			&i.Status,
+			&i.Score,
+			&i.ReplyCount,
+			&i.CreatedAt,
+			&i.EditedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRootCommentsTop = `-- name: ListRootCommentsTop :many
+SELECT id, content_id, root_id, parent_id, author_id, body_md, status, score, reply_count, created_at, edited_at FROM comment
+WHERE content_id = $1 AND root_id IS NULL
+  AND (status = 'VISIBLE' OR (status = 'DELETED' AND reply_count > 0))
+  AND ($2::int IS NULL
+       OR (score, id) < ($2::int, $3::bigint))
+ORDER BY score DESC, id DESC
+LIMIT $4
+`
+
+type ListRootCommentsTopParams struct {
+	ContentID  int64
+	AfterScore *int32
+	AfterID    *int64
+	RowLimit   int32
+}
+
+// Same rows as ListRootComments, most-voted first (idx_comment_roots_top).
+func (q *Queries) ListRootCommentsTop(ctx context.Context, arg ListRootCommentsTopParams) ([]Comment, error) {
+	rows, err := q.db.Query(ctx, listRootCommentsTop,
+		arg.ContentID,
+		arg.AfterScore,
 		arg.AfterID,
 		arg.RowLimit,
 	)
@@ -987,4 +1115,36 @@ type SetCommentStatusParams struct {
 func (q *Queries) SetCommentStatus(ctx context.Context, arg SetCommentStatusParams) error {
 	_, err := q.db.Exec(ctx, setCommentStatus, arg.ContentID, arg.ID, arg.Status)
 	return err
+}
+
+const votedCommentIDs = `-- name: VotedCommentIDs :many
+SELECT comment_id FROM comment_vote
+WHERE content_id = $1 AND user_id = $2
+  AND comment_id = ANY ($3::bigint[])
+`
+
+type VotedCommentIDsParams struct {
+	ContentID int64
+	UserID    int64
+	Ids       []int64
+}
+
+func (q *Queries) VotedCommentIDs(ctx context.Context, arg VotedCommentIDsParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, votedCommentIDs, arg.ContentID, arg.UserID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var comment_id int64
+		if err := rows.Scan(&comment_id); err != nil {
+			return nil, err
+		}
+		items = append(items, comment_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

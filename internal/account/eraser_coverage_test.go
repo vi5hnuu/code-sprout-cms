@@ -91,6 +91,9 @@ var expectedCoveredTables = map[string]map[string]string{
 	"bookmark":          {"user_id": "internal/library/erase.go"},
 	"bookmark_list":     {"user_id": "internal/library/erase.go"},
 	"reaction":          {"user_id": "internal/engagement/erase.go"},
+	"quiz_attempt":      {"user_id": "internal/quiz/handler.go EraseUser"},
+	"user_quiz":         {"user_id": "internal/quiz/handler.go EraseUser"},
+	"reading_progress":  {"user_id": "internal/library/erase.go EraseUserReading"},
 	"user_note":         {"user_id": "internal/library/erase.go"},
 	"user_review":       {"user_id": "internal/library/erase.go"},
 	"user_problem":      {"user_id": "internal/submission/erase.go"},
@@ -106,6 +109,7 @@ var expectedCoveredTables = map[string]map[string]string{
 	"collection":        {"owner_id": "internal/collection/erase.go — collections re-owned by former-member or deleted"},
 	"file":              {"owner_id": "internal/asset/erase.go — avatars MARKED DELETING; article images stay (public, immutable asset-id refs)"},
 	"comment_report":    {"reporter_id": "internal/engagement/erase.go"},
+	"comment_vote":      {"user_id": "internal/engagement/erase.go — votes deleted, voted comments' scores lowered"},
 }
 
 // nonPersonalColumns are deliberately kept after erase. Document the reason inline.

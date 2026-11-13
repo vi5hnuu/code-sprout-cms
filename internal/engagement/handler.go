@@ -3,7 +3,6 @@ package engagement
 import (
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"code-sprout-cms/internal/auth"
@@ -47,6 +46,9 @@ func (h *Handler) Routes(mux *http.ServeMux, authed func(http.Handler) http.Hand
 	me("PUT /v1/me/comments/{contentId}/{commentId}", l.Comments, h.editComment)
 	me("DELETE /v1/me/comments/{contentId}/{commentId}", l.Actions, h.deleteComment)
 	me("POST /v1/me/comments/{contentId}/{commentId}/report", l.Comments, h.report)
+	me("PUT /v1/me/comments/{contentId}/{commentId}/vote", l.Actions, h.vote)
+	me("DELETE /v1/me/comments/{contentId}/{commentId}/vote", l.Actions, h.unvote)
+	me("GET /v1/me/comment-votes/{contentId}", l.Actions, h.votes)
 
 	mux.Handle("GET /v1/public/threads/{contentId}", httpx.HandlerFunc(h.thread))
 	mux.Handle("GET /v1/public/threads/{contentId}/{rootId}/replies", httpx.HandlerFunc(h.replies))
@@ -160,7 +162,7 @@ func (h *Handler) deleteList(w http.ResponseWriter, r *http.Request) error {
 
 // state: GET /v1/me/state?ids=1,2,3
 func (h *Handler) state(w http.ResponseWriter, r *http.Request) error {
-	ids, err := parseIDs(r.URL.Query().Get("ids"))
+	ids, err := httpx.QueryIDs(r, "ids", maxStateIDs)
 	if err != nil {
 		return err
 	}
@@ -171,25 +173,6 @@ func (h *Handler) state(w http.ResponseWriter, r *http.Request) error {
 	noStore(w)
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": st})
 	return nil
-}
-
-func parseIDs(raw string) ([]int64, error) {
-	if raw == "" {
-		return []int64{}, nil
-	}
-	parts := strings.Split(raw, ",")
-	if len(parts) > maxStateIDs {
-		return nil, apperr.ValidationFailed(map[string]string{"ids": "At most 100 ids."})
-	}
-	ids := make([]int64, 0, len(parts))
-	for _, p := range parts {
-		id, err := strconv.ParseInt(strings.TrimSpace(p), 10, 64)
-		if err != nil || id <= 0 {
-			return nil, apperr.ValidationFailed(map[string]string{"ids": "ids must be comma-separated positive integers."})
-		}
-		ids = append(ids, id)
-	}
-	return ids, nil
 }
 
 type commentInput struct {
@@ -273,19 +256,77 @@ func (h *Handler) report(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+func (h *Handler) vote(w http.ResponseWriter, r *http.Request) error {
+	contentID, commentID, err := commentIDs(r)
+	if err != nil {
+		return err
+	}
+	if err := h.svc.VoteComment(r.Context(), principal(r), contentID, commentID); err != nil {
+		return err
+	}
+	httpx.NoContent(w)
+	return nil
+}
+
+func (h *Handler) unvote(w http.ResponseWriter, r *http.Request) error {
+	contentID, commentID, err := commentIDs(r)
+	if err != nil {
+		return err
+	}
+	if err := h.svc.UnvoteComment(r.Context(), principal(r), contentID, commentID); err != nil {
+		return err
+	}
+	httpx.NoContent(w)
+	return nil
+}
+
+// votes: GET /v1/me/comment-votes/{contentId}?ids=1,2,3 — which of these the caller voted for.
+func (h *Handler) votes(w http.ResponseWriter, r *http.Request) error {
+	contentID, err := httpx.PathID(r, "contentId")
+	if err != nil {
+		return err
+	}
+	ids, err := httpx.QueryIDs(r, "ids", maxStateIDs)
+	if err != nil {
+		return err
+	}
+	voted, err := h.svc.VotedComments(r.Context(), principal(r), contentID, ids)
+	if err != nil {
+		return err
+	}
+	noStore(w)
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": voted})
+	return nil
+}
+
 // Threads change often, so the CDN keeps them only briefly; comments.changed purges sooner.
 func (h *Handler) thread(w http.ResponseWriter, r *http.Request) error {
 	contentID, err := httpx.PathID(r, "contentId")
 	if err != nil {
 		return err
 	}
-	req, err := page.Parse[CommentCursor](r)
-	if err != nil {
-		return err
-	}
-	res, err := h.svc.Thread(r.Context(), contentID, req)
-	if err != nil {
-		return err
+	var res page.Page[Comment]
+	// ?sort=new (default) or top. Each order has its own cursor shape, so a cursor is only
+	// meaningful with the sort it came from.
+	switch r.URL.Query().Get("sort") {
+	case "", "new":
+		req, err := page.Parse[CommentCursor](r)
+		if err != nil {
+			return err
+		}
+		if res, err = h.svc.Thread(r.Context(), contentID, req); err != nil {
+			return err
+		}
+	case "top":
+		req, err := page.Parse[TopCursor](r)
+		if err != nil {
+			return err
+		}
+		if res, err = h.svc.ThreadTop(r.Context(), contentID, req); err != nil {
+			return err
+		}
+	default:
+		return apperr.ValidationFailed(map[string]string{"sort": "sort must be new or top"})
 	}
 	httpx.Public(w, 30*time.Second, 5*time.Minute, "comments:"+strconv.FormatInt(contentID, 10))
 	httpx.JSON(w, http.StatusOK, res)

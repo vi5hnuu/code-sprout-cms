@@ -39,6 +39,8 @@ tags:
     description: Likes, bookmarks, comments, shares and views.
   - name: problems
     description: Practice problems, their judging setup, and the problem of the day.
+  - name: quizzes
+    description: Multiple-choice quizzes, authored in Studio and graded on the server for signed-in readers.
   - name: videos
     description: The owner's YouTube uploads, mirrored as watch pages and series.
   - name: judging
@@ -485,6 +487,11 @@ paths:
           required: false
           description: Keep only items of this type (ARTICLE, BLOG, TOPIC_PAGE, PROBLEM, VIDEO, QUIZ). Omit to list every type.
           schema: { $ref: "#/components/schemas/ContentType" }
+        - in: query
+          name: status
+          required: false
+          description: Keep only items in this state (DRAFT, PUBLISHED, ARCHIVED). Omit to list every state.
+          schema: { $ref: "#/components/schemas/ContentStatus" }
       responses:
         "200":
           description: Page of items
@@ -752,6 +759,29 @@ paths:
         "400": { $ref: "#/components/responses/Problem" }
         "401": { $ref: "#/components/responses/Problem" }
         "409": { $ref: "#/components/responses/Problem" }
+  /v1/me/preferences:
+    put:
+      tags: [me]
+      operationId: setPreferences
+      summary: Save the reader's preferences (interface language).
+      description: >-
+        Settings that are not part of the public profile, saved on the account so they follow
+        the reader to every device. The interface language is checked for format only; which
+        languages the interface ships in is the client's concern.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Preferences" }
+      responses:
+        "200":
+          description: The reader, with the saved preferences
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Me" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
   /v1/public/users/{handle}:
     get:
       tags: [content]
@@ -1070,17 +1100,67 @@ paths:
         "400": { $ref: "#/components/responses/Problem" }
         "401": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
+  /v1/me/comments/{contentId}/{commentId}/vote:
+    parameters:
+      - { $ref: "#/components/parameters/ContentID" }
+      - { $ref: "#/components/parameters/CommentID" }
+    put:
+      tags: [engagement]
+      operationId: voteComment
+      summary: Mark a comment helpful (one vote per reader; repeating is a no-op). Full accounts only, not your own comment.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Voted }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+    delete:
+      tags: [engagement]
+      operationId: unvoteComment
+      summary: Withdraw your vote (a no-op when there is none).
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Withdrawn }
+        "401": { $ref: "#/components/responses/Problem" }
+  /v1/me/comment-votes/{contentId}:
+    parameters:
+      - { $ref: "#/components/parameters/ContentID" }
+    get:
+      tags: [engagement]
+      operationId: getCommentVotes
+      summary: Which of up to 100 comments on this item the caller voted for.
+      description: Threads are public and cached for everyone; the client asks for the caller's own votes separately.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: ids, in: query, required: true, description: Comma-separated comment ids., schema: { type: string }, example: "301,302" }
+      responses:
+        "200":
+          description: Ids of the listed comments the caller voted for
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { type: integer, format: int64 } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
   /v1/public/threads/{contentId}:
     parameters:
       - { $ref: "#/components/parameters/ContentID" }
     get:
       tags: [engagement]
       operationId: getThread
-      summary: Top-level comments of a live item, newest first.
+      summary: Top-level comments of a live item, newest first or most-voted first.
       security: []
       parameters:
         - { $ref: "#/components/parameters/Cursor" }
         - { $ref: "#/components/parameters/Limit" }
+        - in: query
+          name: sort
+          required: false
+          description: new (default) or top. A cursor only continues the sort it came from.
+          schema: { type: string, enum: [new, top], default: new }
       responses:
         "200": { $ref: "#/components/responses/CommentPage" }
         "400": { $ref: "#/components/responses/Problem" }
@@ -1409,6 +1489,178 @@ paths:
               schema: { $ref: "#/components/schemas/ProblemPage" }
         "301": { description: Renamed; see Location }
         "404": { $ref: "#/components/responses/Problem" }
+  /v1/studio/quizzes:
+    post:
+      tags: [quizzes]
+      operationId: createQuiz
+      summary: Start a quiz (its intro is the draft body; questions are added separately).
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DraftInput" }
+      responses:
+        "201": { $ref: "#/components/responses/Draft" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /v1/studio/quizzes/{id}:
+    parameters: [{ $ref: "#/components/parameters/ID" }]
+    get:
+      tags: [quizzes]
+      operationId: getQuizStudio
+      summary: The quiz as its editors see it, answer key included.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/QuizStudio" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /v1/studio/quizzes/{id}/settings:
+    parameters: [{ $ref: "#/components/parameters/ID" }]
+    put:
+      tags: [quizzes]
+      operationId: updateQuizSettings
+      summary: Pass mark and shuffling.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/QuizSettings" }
+      responses:
+        "200": { $ref: "#/components/responses/QuizStudio" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /v1/studio/quizzes/{id}/questions:
+    parameters: [{ $ref: "#/components/parameters/ID" }]
+    put:
+      tags: [quizzes]
+      operationId: replaceQuizQuestions
+      summary: Replace the whole question set (1-100 questions, 2-10 options each). Bumps the version, so sheets handed out before are refused on submit.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [questions]
+              additionalProperties: false
+              properties:
+                questions: { type: array, maxItems: 100, items: { $ref: "#/components/schemas/QuizQuestionInput" } }
+      responses:
+        "200": { $ref: "#/components/responses/QuizStudio" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /v1/public/quizzes/{slug}:
+    get:
+      tags: [quizzes]
+      operationId: getQuizPage
+      summary: A quiz's intro, number of questions and pass mark. Questions are not included.
+      security: []
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string } }
+        - { name: locale, in: query, schema: { type: string, default: en } }
+      responses:
+        "200":
+          description: Quiz page
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QuizPage" }
+        "301": { description: Renamed; see Location }
+        "404": { $ref: "#/components/responses/Problem" }
+  /v1/me/quizzes/{id}/questions:
+    parameters: [{ $ref: "#/components/parameters/ID" }]
+    get:
+      tags: [quizzes]
+      operationId: getQuizSheet
+      summary: The questions to answer, without the answer key; shuffled when the quiz asks for it.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Questions
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QuizSheet" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /v1/me/quizzes/{id}/attempts:
+    parameters: [{ $ref: "#/components/parameters/ID" }]
+    post:
+      tags: [quizzes]
+      operationId: submitQuizAttempt
+      summary: Submit answers; graded on the server. Unanswered questions count as wrong; multi-answer questions need exactly the correct options.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version, answers]
+              additionalProperties: false
+              properties:
+                version: { type: integer, description: The sheet's version; a different current version answers 409 quiz.changed. }
+                answers: { type: array, maxItems: 100, items: { $ref: "#/components/schemas/QuizAnswer" } }
+      responses:
+        "201":
+          description: Graded attempt
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QuizGraded" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+    get:
+      tags: [quizzes]
+      operationId: listQuizAttempts
+      summary: Your attempts at this quiz, newest first.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200":
+          description: Attempts
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/QuizAttempt" } }
+                  nextCursor: { type: [string, "null"] }
+        "401": { $ref: "#/components/responses/Problem" }
+  /v1/me/quiz-state:
+    get:
+      tags: [quizzes]
+      operationId: getQuizState
+      summary: Your standing on up to 100 quizzes; quizzes never attempted are absent.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: ids, in: query, required: true, description: Comma-separated quiz ids., schema: { type: string }, example: "12,40" }
+      responses:
+        "200":
+          description: States
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/QuizState" } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
   /v1/public/videos:
     get:
       tags: [videos]
@@ -1731,6 +1983,90 @@ paths:
         "401": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
 
+  /v1/me/reading:
+    get:
+      tags: [library]
+      operationId: listReading
+      summary: Pages you are reading (most recently read first) or have finished (most recently finished first).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+        - in: query
+          name: state
+          required: false
+          description: in-progress (default) or finished. A cursor only continues the list it came from.
+          schema: { type: string, enum: [in-progress, finished], default: in-progress }
+      responses:
+        "200":
+          description: Page of reading entries
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/Reading" } }
+                  nextCursor: { type: [string, "null"] }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+  /v1/me/reading/{contentId}:
+    parameters: [{ $ref: "#/components/parameters/ContentID" }]
+    put:
+      tags: [library]
+      operationId: saveReading
+      summary: Save where you are on a live page (latest position wins; finishing is kept once reached).
+      description: Clients save when the reader moves to another section, at most every 15 seconds, and once when the page is hidden.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [percent]
+              additionalProperties: false
+              properties:
+                headingId: { type: [string, "null"], maxLength: 200, description: Anchor of the section in view; null for the top of the page. }
+                percent: { type: integer, minimum: 0, maximum: 100 }
+      responses:
+        "200":
+          description: Saved position
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReadingPosition" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+    delete:
+      tags: [library]
+      operationId: forgetReading
+      summary: Remove a page from your reading lists.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Removed }
+        "401": { $ref: "#/components/responses/Problem" }
+  /v1/me/reading-state:
+    get:
+      tags: [library]
+      operationId: getReadingState
+      summary: Your positions on up to 100 pages; pages never opened are absent.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: ids, in: query, required: true, description: Comma-separated content ids., schema: { type: string }, example: "12,40" }
+      responses:
+        "200":
+          description: Positions
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/ReadingPosition" } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
   /v1/me/notes:
     get:
       tags: [library]
@@ -2114,6 +2450,11 @@ components:
       schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
 
   responses:
+    QuizStudio:
+      description: The quiz as its editors see it
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/QuizStudio" }
     ProblemStudio:
       description: The problem's judging setup
       content:
@@ -2229,7 +2570,7 @@ components:
 
     Me:
       type: object
-      required: [id, handle, displayName, bio, avatarFileId, avatarUrl, createdAt, roles, isAdmin, isGuest]
+      required: [id, handle, displayName, bio, avatarFileId, avatarUrl, uiLocale, createdAt, roles, isAdmin, isGuest]
       properties:
         id: { type: integer, format: int64 }
         handle: { type: [string, "null"], description: "Public profile handle, used in /u/{handle}." }
@@ -2237,6 +2578,7 @@ components:
         bio: { type: [string, "null"] }
         avatarFileId: { type: [integer, "null"], format: int64 }
         avatarUrl: { type: [string, "null"], description: "Public URL of the avatar picture." }
+        uiLocale: { type: [string, "null"], description: "Interface language the reader chose (e.g. hi); null until they choose." }
         createdAt: { type: string, format: date-time }
         roles:
           type: array
@@ -2621,6 +2963,11 @@ components:
         displayName: { type: string, maxLength: 60 }
         bio: { type: [string, "null"], maxLength: 300 }
         avatarFileId: { type: [integer, "null"], format: int64, description: A READY upload with purpose AVATAR. }
+    Preferences:
+      type: object
+      additionalProperties: false
+      properties:
+        uiLocale: { type: [string, "null"], pattern: "^[a-z]{2}(-[A-Z]{2})?$", description: "Interface language; null clears the choice." }
     PublicUser:
       type: object
       required: [id, handle, displayName, bio, avatarUrl]
@@ -2696,6 +3043,22 @@ components:
                 - type: "null"
                 - $ref: "#/components/schemas/File"
         stats: { $ref: "#/components/schemas/Stats" }
+    ReadingPosition:
+      type: object
+      required: [contentId, headingId, percent, updatedAt, finishedAt]
+      properties:
+        contentId: { type: integer, format: int64 }
+        headingId: { type: [string, "null"], description: Section anchor to resume at; null for the top. }
+        percent: { type: integer }
+        updatedAt: { type: string, format: date-time }
+        finishedAt: { type: [string, "null"], format: date-time, description: When the reader first passed 90%; kept once set. }
+    Reading:
+      allOf:
+        - { $ref: "#/components/schemas/ReadingPosition" }
+        - type: object
+          required: [item]
+          properties:
+            item: { $ref: "#/components/schemas/ListItem" }
     ListItem:
       type: object
       required: [id, type, locale, slug, title, summary, access, publishedAt, lastPublishedAt, readingMinutes, category, author, stats, cover]
@@ -2790,7 +3153,7 @@ components:
         bookmarkListId: { type: [integer, "null"], format: int64 }
     Comment:
       type: object
-      required: [id, contentId, rootId, parentId, author, body, deleted, replyCount, createdAt, editedAt]
+      required: [id, contentId, rootId, parentId, author, body, deleted, replyCount, score, createdAt, editedAt]
       properties:
         id: { type: integer, format: int64 }
         contentId: { type: integer, format: int64 }
@@ -2803,6 +3166,7 @@ components:
         body: { type: string, description: Markdown; empty when deleted. }
         deleted: { type: boolean }
         replyCount: { type: integer }
+        score: { type: integer, description: Readers who marked it helpful; 0 for deleted comments. }
         createdAt: { type: string, format: date-time }
         editedAt: { type: [string, "null"], format: date-time }
     CommentReport:
@@ -2823,6 +3187,142 @@ components:
     Language: { type: string, enum: [c, cpp, csharp, go, java, javascript, kotlin, python, rust, typescript] }
     Difficulty: { type: string, enum: [EASY, MEDIUM, HARD] }
     Verdict: { type: string, enum: [AC, WA, TLE, MLE, RE, CE, IE] }
+    QuizKind: { type: string, enum: [SINGLE, MULTI], description: "SINGLE: exactly one option is correct. MULTI: one or more; the reader must choose exactly those." }
+    QuizSettings:
+      type: object
+      required: [passPercent, shuffle]
+      additionalProperties: false
+      properties:
+        passPercent: { type: integer, minimum: 1, maximum: 100, default: 70 }
+        shuffle: { type: boolean, description: Shuffle questions and options for each reader. }
+    QuizOption:
+      type: object
+      required: [id, body, correct]
+      properties:
+        id: { type: integer, description: Stable within its question (1..n). }
+        body: { type: string, description: Comment-level Sprout markdown. }
+        correct: { type: boolean }
+    QuizQuestion:
+      type: object
+      required: [id, kind, prompt, explanation, options]
+      properties:
+        id: { type: integer, format: int64 }
+        kind: { $ref: "#/components/schemas/QuizKind" }
+        prompt: { type: string }
+        explanation: { type: [string, "null"] }
+        options: { type: array, items: { $ref: "#/components/schemas/QuizOption" } }
+    QuizQuestionInput:
+      type: object
+      required: [kind, prompt, options]
+      additionalProperties: false
+      properties:
+        kind: { $ref: "#/components/schemas/QuizKind" }
+        prompt: { type: string, maxLength: 4000 }
+        explanation: { type: [string, "null"], maxLength: 4000 }
+        options:
+          type: array
+          minItems: 2
+          maxItems: 10
+          items:
+            type: object
+            required: [body, correct]
+            additionalProperties: false
+            properties:
+              body: { type: string, maxLength: 1000 }
+              correct: { type: boolean }
+    QuizStudio:
+      type: object
+      required: [contentId, version, settings, questions]
+      properties:
+        contentId: { type: integer, format: int64 }
+        version: { type: integer }
+        settings: { $ref: "#/components/schemas/QuizSettings" }
+        questions: { type: array, items: { $ref: "#/components/schemas/QuizQuestion" } }
+    QuizPage:
+      allOf:
+        - $ref: "#/components/schemas/PublicPage"
+        - type: object
+          required: [quiz]
+          properties:
+            quiz:
+              type: object
+              required: [questionCount, passPercent, version]
+              properties:
+                questionCount: { type: integer }
+                passPercent: { type: integer }
+                version: { type: integer }
+    QuizSheet:
+      type: object
+      required: [quizId, version, passPercent, questions]
+      properties:
+        quizId: { type: integer, format: int64 }
+        version: { type: integer }
+        passPercent: { type: integer }
+        questions:
+          type: array
+          items:
+            type: object
+            required: [id, kind, prompt, options]
+            properties:
+              id: { type: integer, format: int64 }
+              kind: { $ref: "#/components/schemas/QuizKind" }
+              prompt: { type: string }
+              options:
+                type: array
+                items:
+                  type: object
+                  required: [id, body]
+                  properties:
+                    id: { type: integer }
+                    body: { type: string }
+    QuizAnswer:
+      type: object
+      required: [questionId, optionIds]
+      additionalProperties: false
+      properties:
+        questionId: { type: integer, format: int64 }
+        optionIds: { type: array, maxItems: 10, items: { type: integer } }
+    QuizGraded:
+      type: object
+      required: [attemptId, correct, total, percent, passed, passPercent, results, createdAt]
+      properties:
+        attemptId: { type: integer, format: int64 }
+        correct: { type: integer }
+        total: { type: integer }
+        percent: { type: integer }
+        passed: { type: boolean }
+        passPercent: { type: integer }
+        createdAt: { type: string, format: date-time }
+        results:
+          type: array
+          items:
+            type: object
+            required: [questionId, correct, chosen, correctOptionIds, explanation]
+            properties:
+              questionId: { type: integer, format: int64 }
+              correct: { type: boolean }
+              chosen: { type: array, items: { type: integer } }
+              correctOptionIds: { type: array, items: { type: integer } }
+              explanation: { type: [string, "null"] }
+    QuizAttempt:
+      type: object
+      required: [id, correct, total, percent, passed, createdAt]
+      properties:
+        id: { type: integer, format: int64 }
+        correct: { type: integer }
+        total: { type: integer }
+        percent: { type: integer }
+        passed: { type: boolean }
+        createdAt: { type: string, format: date-time }
+    QuizState:
+      type: object
+      required: [quizId, attempts, bestPercent, lastPercent, passedAt]
+      properties:
+        quizId: { type: integer, format: int64 }
+        attempts: { type: integer }
+        bestPercent: { type: integer }
+        lastPercent: { type: integer }
+        passedAt: { type: [string, "null"], format: date-time, description: When the reader first passed; null if never. }
     CreateProblem:
       allOf:
         - $ref: "#/components/schemas/DraftInput"

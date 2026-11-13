@@ -379,6 +379,22 @@ func (s *Service) checkPublishable(ctx context.Context, tx pgx.Tx, q *contentdb.
 		}
 	}
 
+	// Embedded quizzes must be live too. They join the embedded problems as the page's
+	// practice links, which is how the page learns their titles and slugs to render the embed.
+	if len(a.QuizIDs) > 0 {
+		live, err := q.LiveIDsOfType(ctx, contentdb.LiveIDsOfTypeParams{Type: string(TypeQuiz), Ids: a.QuizIDs})
+		if err != nil {
+			return nil, err
+		}
+		for _, id := range a.QuizIDs {
+			if slices.Contains(live, id) {
+				problems = append(problems, id)
+			} else {
+				issues = append(issues, PublishIssue{Code: "quiz.missing", Message: fmt.Sprintf("No published quiz #%d to embed.", id)})
+			}
+		}
+	}
+
 	typeIssues, err := s.typeIssues(ctx, tx, c)
 	if err != nil {
 		return nil, err

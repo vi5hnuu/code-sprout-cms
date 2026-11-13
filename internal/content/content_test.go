@@ -486,3 +486,55 @@ func containsID(items []Summary, id int64) bool {
 	}
 	return false
 }
+
+// The author's list narrows by type and by status, alone or together, and pages correctly
+// under a filter (the filter is in SQL, before the LIMIT).
+func TestListMineFilters(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	create := func(typ Type) Draft {
+		d, err := f.svc.Create(ctx, f.author, CreateInput{Type: typ, DraftInput: DraftInput{Meta: Meta{Title: "Filter " + testenv.Unique("t")}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	article, blog, archived := create(TypeArticle), create(TypeBlog), create(TypeArticle)
+	if _, err := f.d.Primary.Exec(ctx, "UPDATE content SET status = 'ARCHIVED' WHERE id = $1", archived.ID); err != nil {
+		t.Fatal(err)
+	}
+	list := func(mf MineFilter, limit int) []int64 {
+		var ids []int64
+		req := page.Request[ListCursor]{Limit: limit}
+		for {
+			pg, err := f.svc.ListMine(ctx, f.author, mf, req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, s := range pg.Items {
+				ids = append(ids, s.ID)
+			}
+			if pg.NextCursor == nil {
+				return ids
+			}
+			last := pg.Items[len(pg.Items)-1]
+			req.Key = &ListCursor{UpdatedAt: last.UpdatedAt, ID: last.ID}
+		}
+	}
+	for _, c := range []struct {
+		name string
+		f    MineFilter
+		want []int64
+	}{
+		{"all", MineFilter{}, []int64{archived.ID, blog.ID, article.ID}},
+		{"articles", MineFilter{Type: TypeArticle}, []int64{archived.ID, article.ID}},
+		{"drafts", MineFilter{Status: StatusDraft}, []int64{blog.ID, article.ID}},
+		{"draft articles", MineFilter{Type: TypeArticle, Status: StatusDraft}, []int64{article.ID}},
+		{"published", MineFilter{Status: StatusPublished}, nil},
+	} {
+		got := list(c.f, 1)
+		if fmt.Sprint(got) != fmt.Sprint(c.want) {
+			t.Errorf("%s: ids = %v, want %v", c.name, got, c.want)
+		}
+	}
+}

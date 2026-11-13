@@ -125,6 +125,11 @@ SELECT sqlc.arg(from_id), sqlc.arg(kind), t.id, t.pos::int
 FROM unnest(sqlc.arg(to_ids)::bigint[]) WITH ORDINALITY AS t(id, pos)
 ON CONFLICT DO NOTHING;
 
+-- Which of these ids are published items of this type (embedded quizzes at publish time).
+-- name: LiveIDsOfType :many
+SELECT id FROM content
+WHERE type = sqlc.arg(type) AND id = ANY (sqlc.arg(ids)::bigint[]) AND status = 'PUBLISHED' AND deleted_at IS NULL;
+
 -- name: LiveIDsBySlug :many
 SELECT id, slug FROM content
 WHERE type = sqlc.arg(type) AND locale = sqlc.arg(locale) AND slug = ANY (sqlc.arg(slugs)::text[])
@@ -156,6 +161,7 @@ INSERT INTO content_stats (content_id) VALUES ($1) ON CONFLICT DO NOTHING;
 SELECT * FROM content
 WHERE author_id = sqlc.arg(author_id) AND deleted_at IS NULL
   AND (sqlc.narg(type_filter)::text IS NULL OR type = sqlc.narg(type_filter)::text)
+  AND (sqlc.narg(status_filter)::text IS NULL OR status = sqlc.narg(status_filter)::text)
   AND (sqlc.narg(after_updated)::timestamptz IS NULL
        OR (updated_at, id) < (sqlc.narg(after_updated)::timestamptz, sqlc.narg(after_id)::bigint))
 ORDER BY updated_at DESC, id DESC

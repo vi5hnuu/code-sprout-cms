@@ -64,6 +64,7 @@ type Analysis struct {
 	Snippets       []Snippet `json:"snippets"` // runnable code blocks
 	AssetIDs       []int64   `json:"assetIds"` // sorted, unique
 	ProblemSlugs   []string  `json:"problemSlugs"`
+	QuizIDs        []int64   `json:"quizIds"` // embedded ::quiz{id}, sorted, unique
 }
 
 func (a *Analysis) Valid() bool { return len(a.Issues) == 0 }
@@ -92,7 +93,7 @@ func Analyze(body []byte) *Analysis { return analyze(body, contentProfile) }
 func AnalyzeComment(body []byte) *Analysis { return analyze(body, commentProfile) }
 
 func analyze(body []byte, prof profile) *Analysis {
-	a := &Analysis{Issues: []Issue{}, TOC: []Heading{}, Snippets: []Snippet{}, AssetIDs: []int64{}, ProblemSlugs: []string{}}
+	a := &Analysis{Issues: []Issue{}, TOC: []Heading{}, Snippets: []Snippet{}, AssetIDs: []int64{}, ProblemSlugs: []string{}, QuizIDs: []int64{}}
 	if len(body) > prof.maxBytes {
 		a.Issues = append(a.Issues, Issue{Line: 1, Code: "body.too_large",
 			Message: fmt.Sprintf("Body is %d bytes; the limit is %d.", len(body), prof.maxBytes)})
@@ -111,6 +112,8 @@ func analyze(body []byte, prof profile) *Analysis {
 	slices.Sort(a.AssetIDs)
 	slices.Sort(a.ProblemSlugs)
 	a.ProblemSlugs = slices.Compact(a.ProblemSlugs)
+	slices.Sort(a.QuizIDs)
+	a.QuizIDs = slices.Compact(a.QuizIDs)
 	sort.SliceStable(a.Issues, func(i, j int) bool { return a.Issues[i].Line < a.Issues[j].Line })
 	// One problem can surface as several identical issues (an inline <b>...</b> is two HTML
 	// nodes); the author only needs to see it once.
@@ -313,6 +316,10 @@ func (w *walker) directive(d *Directive) {
 	case "problem":
 		if slug := d.Attrs["slug"]; slugPattern.MatchString(slug) {
 			w.a.ProblemSlugs = append(w.a.ProblemSlugs, slug)
+		}
+	case "quiz":
+		if id, err := strconv.ParseInt(d.Attrs["id"], 10, 64); err == nil && id > 0 {
+			w.a.QuizIDs = append(w.a.QuizIDs, id)
 		}
 	case "video":
 		_, file := d.Attrs["file"]
