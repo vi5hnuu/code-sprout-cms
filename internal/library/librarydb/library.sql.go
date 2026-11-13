@@ -24,12 +24,35 @@ func (q *Queries) DeleteNote(ctx context.Context, arg DeleteNoteParams) error {
 	return err
 }
 
+const deleteReading = `-- name: DeleteReading :exec
+DELETE FROM reading_progress WHERE user_id = $1 AND content_id = $2
+`
+
+type DeleteReadingParams struct {
+	UserID    int64
+	ContentID int64
+}
+
+func (q *Queries) DeleteReading(ctx context.Context, arg DeleteReadingParams) error {
+	_, err := q.db.Exec(ctx, deleteReading, arg.UserID, arg.ContentID)
+	return err
+}
+
 const deleteUserNotes = `-- name: DeleteUserNotes :exec
 DELETE FROM user_note WHERE user_id = $1
 `
 
 func (q *Queries) DeleteUserNotes(ctx context.Context, userID int64) error {
 	_, err := q.db.Exec(ctx, deleteUserNotes, userID)
+	return err
+}
+
+const deleteUserReading = `-- name: DeleteUserReading :exec
+DELETE FROM reading_progress WHERE user_id = $1
+`
+
+func (q *Queries) DeleteUserReading(ctx context.Context, userID int64) error {
+	_, err := q.db.Exec(ctx, deleteUserReading, userID)
 	return err
 }
 
@@ -100,6 +123,161 @@ func (q *Queries) ListNotes(ctx context.Context, arg ListNotesParams) ([]ListNot
 	return items, nil
 }
 
+const listReadingFinished = `-- name: ListReadingFinished :many
+SELECT user_id, content_id, heading_id, percent, updated_at, finished_at FROM reading_progress
+WHERE user_id = $1 AND finished_at IS NOT NULL
+  AND ($2::timestamptz IS NULL
+       OR (finished_at, content_id) < ($2::timestamptz, $3::bigint))
+ORDER BY finished_at DESC, content_id DESC
+LIMIT $4
+`
+
+type ListReadingFinishedParams struct {
+	UserID   int64
+	AfterAt  *time.Time
+	AfterID  *int64
+	RowLimit int32
+}
+
+func (q *Queries) ListReadingFinished(ctx context.Context, arg ListReadingFinishedParams) ([]ReadingProgress, error) {
+	rows, err := q.db.Query(ctx, listReadingFinished,
+		arg.UserID,
+		arg.AfterAt,
+		arg.AfterID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadingProgress{}
+	for rows.Next() {
+		var i ReadingProgress
+		if err := rows.Scan(
+			&i.UserID,
+			&i.ContentID,
+			&i.HeadingID,
+			&i.Percent,
+			&i.UpdatedAt,
+			&i.FinishedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listReadingInProgress = `-- name: ListReadingInProgress :many
+SELECT user_id, content_id, heading_id, percent, updated_at, finished_at FROM reading_progress
+WHERE user_id = $1 AND finished_at IS NULL
+  AND ($2::timestamptz IS NULL
+       OR (updated_at, content_id) < ($2::timestamptz, $3::bigint))
+ORDER BY updated_at DESC, content_id DESC
+LIMIT $4
+`
+
+type ListReadingInProgressParams struct {
+	UserID   int64
+	AfterAt  *time.Time
+	AfterID  *int64
+	RowLimit int32
+}
+
+func (q *Queries) ListReadingInProgress(ctx context.Context, arg ListReadingInProgressParams) ([]ReadingProgress, error) {
+	rows, err := q.db.Query(ctx, listReadingInProgress,
+		arg.UserID,
+		arg.AfterAt,
+		arg.AfterID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadingProgress{}
+	for rows.Next() {
+		var i ReadingProgress
+		if err := rows.Scan(
+			&i.UserID,
+			&i.ContentID,
+			&i.HeadingID,
+			&i.Percent,
+			&i.UpdatedAt,
+			&i.FinishedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const pruneReading = `-- name: PruneReading :execrows
+DELETE FROM reading_progress rp
+WHERE (rp.user_id, rp.content_id) IN (
+    SELECT old.user_id, old.content_id FROM reading_progress old
+    WHERE old.updated_at < $1::timestamptz
+    LIMIT $2::int
+)
+`
+
+type PruneReadingParams struct {
+	Before time.Time
+	Batch  int32
+}
+
+// Retention: positions untouched for a year go, a batch at a time (the caller loops).
+func (q *Queries) PruneReading(ctx context.Context, arg PruneReadingParams) (int64, error) {
+	result, err := q.db.Exec(ctx, pruneReading, arg.Before, arg.Batch)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const readingStates = `-- name: ReadingStates :many
+SELECT user_id, content_id, heading_id, percent, updated_at, finished_at FROM reading_progress WHERE user_id = $1 AND content_id = ANY ($2::bigint[])
+`
+
+type ReadingStatesParams struct {
+	UserID int64
+	Ids    []int64
+}
+
+func (q *Queries) ReadingStates(ctx context.Context, arg ReadingStatesParams) ([]ReadingProgress, error) {
+	rows, err := q.db.Query(ctx, readingStates, arg.UserID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadingProgress{}
+	for rows.Next() {
+		var i ReadingProgress
+		if err := rows.Scan(
+			&i.UserID,
+			&i.ContentID,
+			&i.HeadingID,
+			&i.Percent,
+			&i.UpdatedAt,
+			&i.FinishedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const upsertNote = `-- name: UpsertNote :one
 INSERT INTO user_note (user_id, content_id, body_md, updated_at) VALUES ($1, $2, $3, now())
 ON CONFLICT (user_id, content_id) DO UPDATE SET body_md = EXCLUDED.body_md, updated_at = now()
@@ -120,6 +298,49 @@ func (q *Queries) UpsertNote(ctx context.Context, arg UpsertNoteParams) (UserNot
 		&i.ContentID,
 		&i.BodyMd,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const upsertReading = `-- name: UpsertReading :one
+
+INSERT INTO reading_progress (user_id, content_id, heading_id, percent, updated_at, finished_at)
+VALUES ($1, $2, $3, $4, now(),
+        CASE WHEN $4::smallint >= $5::smallint THEN now() END)
+ON CONFLICT (user_id, content_id) DO UPDATE
+SET heading_id  = EXCLUDED.heading_id,
+    percent     = EXCLUDED.percent,
+    updated_at  = now(),
+    finished_at = COALESCE(reading_progress.finished_at, EXCLUDED.finished_at)
+RETURNING user_id, content_id, heading_id, percent, updated_at, finished_at
+`
+
+type UpsertReadingParams struct {
+	UserID            int64
+	ContentID         int64
+	HeadingID         *string
+	Percent           int16
+	FinishedAtPercent int16
+}
+
+// ── Reading progress ────────────────────────────────────────────────────────
+// The latest position wins; finished_at is set once and kept.
+func (q *Queries) UpsertReading(ctx context.Context, arg UpsertReadingParams) (ReadingProgress, error) {
+	row := q.db.QueryRow(ctx, upsertReading,
+		arg.UserID,
+		arg.ContentID,
+		arg.HeadingID,
+		arg.Percent,
+		arg.FinishedAtPercent,
+	)
+	var i ReadingProgress
+	err := row.Scan(
+		&i.UserID,
+		&i.ContentID,
+		&i.HeadingID,
+		&i.Percent,
+		&i.UpdatedAt,
+		&i.FinishedAt,
 	)
 	return i, err
 }

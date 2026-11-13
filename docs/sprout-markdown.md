@@ -105,3 +105,4 @@ The TOC lists `##` and `###` headings.
 - `snippets`: runnable blocks.
 - `assetIds`: images and uploaded videos. Each must exist and be READY to publish.
 - `problemSlugs`: embedded problems.
+- `quizIds`: embedded quizzes (`::quiz{id}`), sorted and unique. Each must be a published quiz to publish.

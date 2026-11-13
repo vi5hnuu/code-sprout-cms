@@ -18,6 +18,7 @@ import (
 	"code-sprout-cms/internal/outbox"
 	"code-sprout-cms/internal/platform/apperr"
 	"code-sprout-cms/internal/platform/db"
+	"code-sprout-cms/internal/platform/locales"
 	"code-sprout-cms/internal/taxonomy/taxonomydb"
 )
 
@@ -35,6 +36,13 @@ var reservedRootSlugs = map[string]bool{
 	"problems": true, "quiz": true, "search": true, "series": true, "settings": true, "shorts": true,
 	"sitemaps": true, "studio": true, "study-plans": true, "tag": true, "tags": true, "topics": true,
 	"u": true, "videos": true,
+}
+
+// isReservedRootSlug: a top-level section may not take a site route's name, nor a content
+// language code, since /{locale}/… is where pages written in that language live
+// (internal/platform/locales).
+func isReservedRootSlug(slug string) bool {
+	return reservedRootSlugs[slug] || locales.IsContent(slug)
 }
 
 // Category is the API view. Path is the URL form ("dsa/algorithms"); the database stores the
@@ -189,7 +197,7 @@ func (s *Service) Create(ctx context.Context, p auth.Principal, in CreateCategor
 	}
 	// Top-level sections shape the whole site, so only admins add them.
 	if in.ParentID == nil {
-		if reservedRootSlugs[in.Slug] {
+		if isReservedRootSlug(in.Slug) {
 			return Category{}, apperr.ValidationFailed(map[string]string{"slug": "This slug is reserved for a site page."})
 		}
 		if err := s.policy.Require(ctx, p, access.RoleAdmin, nil); err != nil {
@@ -293,7 +301,7 @@ func (s *Service) Move(ctx context.Context, p auth.Principal, id int64, in MoveC
 		return Category{}, err
 	}
 	if in.ParentID == nil {
-		if reservedRootSlugs[in.Slug] {
+		if isReservedRootSlug(in.Slug) {
 			return Category{}, apperr.ValidationFailed(map[string]string{"slug": "This slug is reserved for a site page."})
 		}
 		if err := s.policy.Require(ctx, p, access.RoleAdmin, nil); err != nil {

@@ -12,6 +12,7 @@ import (
 
 	"code-sprout-cms/internal/markdown"
 	"code-sprout-cms/internal/platform/apperr"
+	"code-sprout-cms/internal/platform/locales"
 )
 
 const (
@@ -142,6 +143,9 @@ func validateCreate(in CreateInput) error {
 	f := map[string]string{}
 	if !localePattern.MatchString(in.Locale) {
 		f["locale"] = "locale must look like en or pt-BR."
+	} else if !locales.IsContent(in.Locale) {
+		// The locale is part of the page's URL; only languages the site serves can have pages.
+		f["locale"] = "Pages can be written in: " + locales.List() + "."
 	}
 	if len(f) > 0 {
 		return apperr.ValidationFailed(f)
