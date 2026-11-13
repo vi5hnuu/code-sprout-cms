@@ -13,7 +13,7 @@ import (
 const anonymizeUser = `-- name: AnonymizeUser :exec
 UPDATE app_user
 SET auth_sub = 'erased:' || id, handle = NULL, display_name = 'Former member', bio = NULL,
-    avatar_file_id = NULL, deleted_at = now(), updated_at = now()
+    avatar_file_id = NULL, ui_locale = NULL, deleted_at = now(), updated_at = now()
 WHERE id = $1
 `
 
@@ -49,7 +49,7 @@ func (q *Queries) FindUserIDBySub(ctx context.Context, authSub string) (int64, e
 }
 
 const getUser = `-- name: GetUser :one
-SELECT id, handle, display_name, bio, avatar_file_id, created_at
+SELECT id, handle, display_name, bio, avatar_file_id, ui_locale, created_at
 FROM app_user
 WHERE id = $1
 `
@@ -60,6 +60,7 @@ type GetUserRow struct {
 	DisplayName  string
 	Bio          *string
 	AvatarFileID *int64
+	UiLocale     *string
 	CreatedAt    time.Time
 }
 
@@ -72,6 +73,7 @@ func (q *Queries) GetUser(ctx context.Context, id int64) (GetUserRow, error) {
 		&i.DisplayName,
 		&i.Bio,
 		&i.AvatarFileID,
+		&i.UiLocale,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -193,6 +195,22 @@ func (q *Queries) ListRoleGrants(ctx context.Context, userID int64) ([]ListRoleG
 		return nil, err
 	}
 	return items, nil
+}
+
+const setUILocale = `-- name: SetUILocale :exec
+UPDATE app_user SET ui_locale = $1, updated_at = now()
+WHERE id = $2
+`
+
+type SetUILocaleParams struct {
+	UiLocale *string
+	ID       int64
+}
+
+// The reader's interface language; NULL clears the choice.
+func (q *Queries) SetUILocale(ctx context.Context, arg SetUILocaleParams) error {
+	_, err := q.db.Exec(ctx, setUILocale, arg.UiLocale, arg.ID)
+	return err
 }
 
 const updateProfile = `-- name: UpdateProfile :one
