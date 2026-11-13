@@ -29,6 +29,7 @@ import (
 	"code-sprout-cms/internal/platform/metrics"
 	"code-sprout-cms/internal/platform/storage"
 	"code-sprout-cms/internal/problem"
+	"code-sprout-cms/internal/quiz"
 	"code-sprout-cms/internal/search"
 	"code-sprout-cms/internal/submission"
 	"code-sprout-cms/internal/taxonomy"
@@ -75,6 +76,8 @@ func run() error {
 	engagements := engagement.NewService(database, rdb, reader, users, policy)
 	// Registers the PROBLEM publish hooks so scheduled problems publish correctly here too.
 	problems := problem.NewService(database, contents, reader, assets, policy)
+	// Registers the QUIZ publish check, so scheduled quiz publishes are checked like Studio ones.
+	quiz.NewService(database, contents, reader)
 	submissions := submission.NewService(database, rdb, judge.New(cfg.Judge.URL, cfg.Judge.APIKey, cfg.Judge.Runtimes), problems, problems, reader)
 
 	// Outbox consumers: everything outside the database that mirrors content.

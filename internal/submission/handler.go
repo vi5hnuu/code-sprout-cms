@@ -3,7 +3,6 @@ package submission
 import (
 	"net/http"
 	"strconv"
-	"strings"
 
 	"code-sprout-cms/internal/auth"
 	"code-sprout-cms/internal/platform/apperr"
@@ -182,15 +181,9 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (h *Handler) states(w http.ResponseWriter, r *http.Request) error {
-	var ids []int64
-	if raw := r.URL.Query().Get("ids"); raw != "" {
-		for _, p := range strings.Split(raw, ",") {
-			id, err := strconv.ParseInt(strings.TrimSpace(p), 10, 64)
-			if err != nil || id <= 0 {
-				return apperr.ValidationFailed(map[string]string{"ids": "ids must be comma-separated positive integers."})
-			}
-			ids = append(ids, id)
-		}
+	ids, err := httpx.QueryIDs(r, "ids", maxStateIDs)
+	if err != nil {
+		return err
 	}
 	st, err := h.svc.States(r.Context(), principal(r), ids)
 	if err != nil {

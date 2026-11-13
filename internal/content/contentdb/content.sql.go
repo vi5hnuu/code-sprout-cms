@@ -1886,6 +1886,37 @@ func (q *Queries) LiveIDsBySlug(ctx context.Context, arg LiveIDsBySlugParams) ([
 	return items, nil
 }
 
+const liveIDsOfType = `-- name: LiveIDsOfType :many
+SELECT id FROM content
+WHERE type = $1 AND id = ANY ($2::bigint[]) AND status = 'PUBLISHED' AND deleted_at IS NULL
+`
+
+type LiveIDsOfTypeParams struct {
+	Type string
+	Ids  []int64
+}
+
+// Which of these ids are published items of this type (embedded quizzes at publish time).
+func (q *Queries) LiveIDsOfType(ctx context.Context, arg LiveIDsOfTypeParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, liveIDsOfType, arg.Type, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const liveProblemsTitled = `-- name: LiveProblemsTitled :many
 SELECT id, norm_title(title)::text AS norm FROM content
 WHERE norm_title(title) = ANY ($1::text[])

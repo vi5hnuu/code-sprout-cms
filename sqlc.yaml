@@ -116,6 +116,14 @@ sql:
         out: internal/library/librarydb
   - engine: postgresql
     schema: db/migrations
+    queries: db/queries/quiz.sql
+    gen:
+      go:
+        <<: *go
+        package: quizdb
+        out: internal/quiz/quizdb
+  - engine: postgresql
+    schema: db/migrations
     queries: db/queries/collection.sql
     gen:
       go:
