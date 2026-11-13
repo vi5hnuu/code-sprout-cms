@@ -32,6 +32,7 @@ import (
 	"code-sprout-cms/internal/platform/ratelimit"
 	"code-sprout-cms/internal/platform/storage"
 	"code-sprout-cms/internal/problem"
+	"code-sprout-cms/internal/quiz"
 	"code-sprout-cms/internal/roles"
 	"code-sprout-cms/internal/search"
 	"code-sprout-cms/internal/submission"
@@ -82,7 +83,7 @@ func run() error {
 	reader := content.NewReader(database, assets, taxonomies, users, engagement.NewStatsReader(database))
 	engagements := engagement.NewService(database, rdb, reader, users, policy)
 	limiter := ratelimit.New(rdb)
-	clientIP := ratelimit.ClientIPFrom(cfg.TrustedClientIPHeader, cfg.InternalProxySecret)
+	identify := ratelimit.IdentifyFrom(cfg.TrustedClientIPHeader, cfg.InternalProxySecret)
 
 	// Rate-limit bucket names, kept as a typed set so a typo at a call site is a
 	// compile-time error (unknown identifier) rather than silently routing traffic
@@ -98,28 +99,30 @@ func run() error {
 		bucketSearch      bucket = "search"
 		bucketRuns        bucket = "runs"
 		bucketSubmissions bucket = "submissions"
+		bucketQuizzes     bucket = "quizzes"
 	)
 	rl := func(name bucket, limit ratelimit.Limit) httpx.Middleware {
-		return limiter.Middleware(string(name), limit, clientIP)
+		return limiter.Middleware(string(name), limit, identify)
 	}
 
 	api := http.NewServeMux()
 	user.NewHandler(users).Routes(api, auth.RequireUser)
 	account.NewHandler(account.NewService(database, users.Forget,
-		engagement.EraseUser, library.EraseUser, submission.EraseUser, collection.EraseUser, access.EraseUser, asset.EraseUser, users.EraseUser,
+		engagement.EraseUser, library.EraseUser, library.EraseUserReading, submission.EraseUser, quiz.EraseUser, collection.EraseUser, access.EraseUser, asset.EraseUser, users.EraseUser,
 	)).Routes(api, auth.RequireUser)
 	taxonomy.NewHandler(taxonomies).Routes(api, auth.RequireUser)
 	asset.NewHandler(assets).Routes(api, auth.RequireUser,
 		rl(bucketUploads, ratelimit.PerMinute(30, 10)))
 	content.NewHandler(contents).Routes(api, auth.RequireUser)
 	content.NewPublicHandler(reader).Routes(api)
-	engagement.NewHandler(engagements, clientIP).Routes(api, auth.RequireUser, engagement.Limits{
+	engagement.NewHandler(engagements, identify).Routes(api, auth.RequireUser, engagement.Limits{
 		Actions:  rl(bucketActions, ratelimit.PerMinute(120, 30)),
 		Comments: rl(bucketComments, ratelimit.PerMinute(10, 3)),
 		Events:   rl(bucketEvents, ratelimit.PerMinute(120, 30)),
 	})
 	library.NewHandler(engagements, reader).Routes(api, auth.RequireUser)
 	library.NewNotes(database, reader).Routes(api, auth.RequireUser)
+	library.NewProgress(database, reader).Routes(api, auth.RequireUser, rl(bucketActions, ratelimit.PerMinute(120, 30)))
 	collection.NewHandler(collection.NewService(database, reader, policy)).Routes(api, auth.RequireUser)
 	roles.NewHandler(access.NewGrants(database, policy), users, taxonomies).Routes(api, auth.RequireUser)
 
@@ -133,9 +136,11 @@ func run() error {
 	search.NewHandler(searchIndex, search.NewIndexer(searchIndex, reader, problems, enqueue), policy).Routes(api, auth.RequireUser,
 		rl(bucketSearch, ratelimit.PerMinute(60, 20)))
 	problem.NewHandler(problems).Routes(api, auth.RequireUser)
+	// Grading writes an attempt; a reader takes a quiz in minutes, so this is generous.
+	quiz.NewHandler(quiz.NewService(database, contents, reader)).Routes(api, auth.RequireUser, rl(bucketQuizzes, ratelimit.PerMinute(20, 5)))
 	video.NewHandler(video.NewService(database, reader)).Routes(api)
 	submissions := submission.NewService(database, rdb, judge.New(cfg.Judge.URL, cfg.Judge.APIKey, cfg.Judge.Runtimes), problems, problems, reader)
-	submission.NewHandler(submissions, clientIP).Routes(api, auth.RequireUser, submission.Limits{
+	submission.NewHandler(submissions, identify).Routes(api, auth.RequireUser, submission.Limits{
 		Runs:        rl(bucketRuns, ratelimit.PerMinute(20, 5)),
 		Submissions: rl(bucketSubmissions, ratelimit.PerMinute(10, 3)),
 	})

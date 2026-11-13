@@ -42,8 +42,13 @@ type Comment struct {
 	Body       string           `json:"body"`   // empty for deleted comments
 	Deleted    bool             `json:"deleted"`
 	ReplyCount int32            `json:"replyCount"`
+	Score      int32            `json:"score"` // readers who marked it helpful; 0 for deleted comments
 	CreatedAt  time.Time        `json:"createdAt"`
 	EditedAt   *time.Time       `json:"editedAt"`
+
+	// rank is the stored score whatever the status. The "top" order sorts by it in SQL, so its
+	// cursor must carry it too; Score above is hidden (0) on deleted comments.
+	rank int32
 }
 
 type CommentCursor struct {
@@ -52,6 +57,16 @@ type CommentCursor struct {
 }
 
 func commentCursor(c Comment) CommentCursor { return CommentCursor{At: c.CreatedAt, ID: c.ID} }
+
+// TopCursor pages the "top" order. A score can change between pages, so a comment may move
+// across the boundary (seen twice or skipped), as on any vote-ranked list; the keyset keeps
+// every page an index range regardless.
+type TopCursor struct {
+	Score int32 `json:"s"`
+	ID    int64 `json:"i"`
+}
+
+func topCursor(c Comment) TopCursor { return TopCursor{Score: c.rank, ID: c.ID} }
 
 func validateCommentBody(body string) (string, error) {
 	body = strings.TrimSpace(body)
@@ -330,6 +345,27 @@ func (s *Service) Thread(ctx context.Context, contentID int64, req page.Request[
 	return page.Build(out, req.Limit, commentCursor), nil
 }
 
+// ThreadTop lists top-level comments of a live item, most-voted first. A deleted root kept for
+// its replies keeps its place by its stored score but shows none.
+func (s *Service) ThreadTop(ctx context.Context, contentID int64, req page.Request[TopCursor]) (page.Page[Comment], error) {
+	if err := s.requireLive(ctx, contentID); err != nil {
+		return page.Page[Comment]{}, err
+	}
+	params := engagementdb.ListRootCommentsTopParams{ContentID: contentID, RowLimit: int32(req.Limit + 1)}
+	if req.Key != nil {
+		params.AfterScore, params.AfterID = &req.Key.Score, &req.Key.ID
+	}
+	rows, err := engagementdb.New(s.db.Replica).ListRootCommentsTop(ctx, params)
+	if err != nil {
+		return page.Page[Comment]{}, err
+	}
+	out, err := s.hydrate(ctx, rows)
+	if err != nil {
+		return page.Page[Comment]{}, err
+	}
+	return page.Build(out, req.Limit, topCursor), nil
+}
+
 // Replies lists one thread's replies, oldest first (conversation order).
 func (s *Service) Replies(ctx context.Context, contentID, rootID int64, req page.Request[CommentCursor]) (page.Page[Comment], error) {
 	params := engagementdb.ListRepliesParams{ContentID: contentID, RootID: &rootID, RowLimit: int32(req.Limit + 1)}
@@ -359,10 +395,10 @@ func (s *Service) hydrate(ctx context.Context, rows []engagementdb.Comment) ([]C
 	out := make([]Comment, len(rows))
 	for i, r := range rows {
 		c := Comment{ID: r.ID, ContentID: r.ContentID, RootID: r.RootID, ParentID: r.ParentID,
-			ReplyCount: r.ReplyCount, CreatedAt: r.CreatedAt, EditedAt: r.EditedAt}
+			ReplyCount: r.ReplyCount, CreatedAt: r.CreatedAt, EditedAt: r.EditedAt, rank: r.Score}
 		if CommentStatus(r.Status) == CommentVisible {
 			a := authors[r.AuthorID]
-			c.Author, c.Body = &a, r.BodyMd
+			c.Author, c.Body, c.Score = &a, r.BodyMd, r.Score
 		} else {
 			c.Deleted = true
 		}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -26,43 +27,78 @@ const (
 	retryAfter = 30 * time.Second
 )
 
-// RunNext judges one waiting submission. It reports whether there was one, so the worker
-// loops while the queue has work.
+// RunNext judges one waiting submission. It reports whether there was one.
 func (s *Service) RunNext(ctx context.Context) (bool, error) {
-	q := submissiondb.New(s.db.Primary)
-	sub, err := q.LeaseSubmission(ctx, int32(leaseFor.Seconds()))
-	if db.IsNoRows(err) {
-		return false, nil
-	}
-	if err != nil {
+	sub, ok, err := s.lease(ctx)
+	if err != nil || !ok {
 		return false, err
 	}
+	return true, s.runLeased(ctx, sub)
+}
+
+// lease claims the next waiting submission for this process (SKIP LOCKED, so every runner
+// here and in other replicas gets a different one), or reports that the queue is empty.
+func (s *Service) lease(ctx context.Context) (submissiondb.Submission, bool, error) {
+	sub, err := submissiondb.New(s.db.Primary).LeaseSubmission(ctx, int32(leaseFor.Seconds()))
+	if db.IsNoRows(err) {
+		return submissiondb.Submission{}, false, nil
+	}
+	if err != nil {
+		return submissiondb.Submission{}, false, err
+	}
+	return sub, true, nil
+}
+
+// runLeased judges a leased submission and stores its outcome.
+func (s *Service) runLeased(ctx context.Context, sub submissiondb.Submission) error {
 	// A runner that died mid-judging (crash, OOM) leaves the lease to expire and the
 	// submission is leased again; past maxAttempts it is failed instead of looping forever.
 	if sub.Attempts > maxAttempts {
-		return true, s.fail(ctx, sub, "We could not judge this submission. Please submit again.")
+		return s.fail(ctx, sub, "We could not judge this submission. Please submit again.")
 	}
 	if err := s.judgeSubmission(ctx, sub); err != nil {
-		return true, s.handleRunError(ctx, sub, err)
+		return s.handleRunError(ctx, sub, err)
 	}
-	return true, nil
+	return nil
 }
 
-// RunQueue processes submissions until ctx ends; several workers can run it at once.
-func (s *Service) RunQueue(ctx context.Context, idle time.Duration) {
+// RunQueue judges submissions until ctx ends, up to `workers` at a time. One loop leases, so
+// an idle queue costs one poll per interval however many workers there are, and each leased
+// submission is judged on its own goroutine while a slot is free. Judging is almost entirely
+// waiting on ls-judge, so the goroutines are cheap and the judge's own capacity is the real
+// bound; with a single worker a contest would queue behind one slow submission at a time.
+//
+// A slot is taken before leasing, never after: a submission leased with nowhere to run would
+// sit on its lease (10 minutes) while other replicas skip it.
+func (s *Service) RunQueue(ctx context.Context, idle time.Duration, workers int) {
+	slots := make(chan struct{}, max(1, workers))
+	var wg sync.WaitGroup
+	defer wg.Wait()
 	for {
-		worked, err := s.RunNext(ctx)
-		if err != nil && ctx.Err() == nil {
-			slog.Error("submission run failed", "err", err)
-		}
-		if worked {
-			continue
-		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(idle):
+		case slots <- struct{}{}:
 		}
+		sub, ok, err := s.lease(ctx)
+		if err != nil && ctx.Err() == nil {
+			slog.Error("submission lease failed", "err", err)
+		}
+		if !ok {
+			<-slots
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(idle):
+			}
+			continue
+		}
+		wg.Go(func() {
+			defer func() { <-slots }()
+			if err := s.runLeased(ctx, sub); err != nil && ctx.Err() == nil {
+				slog.Error("submission run failed", "id", sub.ID, "err", err)
+			}
+		})
 	}
 }
 

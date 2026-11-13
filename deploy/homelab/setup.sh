@@ -37,6 +37,9 @@ install -d -m 0755 \
     "$LOG_ROOT"/api \
     "$LOG_ROOT"/worker \
     "$LOG_ROOT"/web
+# WAL archive (used when PG_ARCHIVE_MODE=on in ./.env): written by the postgres process inside
+# the container, which runs as uid 70 (postgres:17-alpine), so it must own the directory.
+install -d -m 0700 -o 70 -g 70 "$DATA_ROOT"/wal_archive
 
 # ── prod.env ────────────────────────────────────────────────────────────────
 TARGET=/etc/code-sprout-cms/prod.env

@@ -3,8 +3,12 @@ package engagement
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
 	"sync"
 	"testing"
+
+	"github.com/jackc/pgx/v5"
 
 	"code-sprout-cms/internal/access"
 	"code-sprout-cms/internal/asset"
@@ -354,4 +358,179 @@ func countRows(t *testing.T, d *db.DB, q string, args ...any) int {
 		t.Fatal(err)
 	}
 	return n
+}
+
+// A vote is one row per reader per comment and moves the score once; the voter's own state
+// comes from VotedComments; withdrawing and account erase both take the point back.
+func TestCommentVotes(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	id := e.item()
+	alice, bob, carol := testenv.User(t, e.d), testenv.User(t, e.d), testenv.User(t, e.d)
+	c, err := e.svc.CreateComment(ctx, alice, id, nil, "Use lo + (hi - lo) / 2.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := e.svc.CreateComment(ctx, alice, id, nil, "Or unsigned shift.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	score := func() int32 {
+		t.Helper()
+		pg, err := e.svc.Thread(ctx, id, page.Request[CommentCursor]{Limit: 10})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, x := range pg.Items {
+			if x.ID == c.ID {
+				return x.Score
+			}
+		}
+		t.Fatal("comment missing from thread")
+		return 0
+	}
+
+	wantCode(t, e.svc.VoteComment(ctx, auth.Principal{UserID: bob.UserID, IsGuest: true}, id, c.ID), "comment.vote_guest")
+	wantCode(t, e.svc.VoteComment(ctx, alice, id, c.ID), "comment.own_vote")
+	wantCode(t, e.svc.VoteComment(ctx, bob, id, 1<<62), "comment.not_found")
+
+	for range 2 { // idempotent
+		if err := e.svc.VoteComment(ctx, bob, id, c.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := e.svc.VoteComment(ctx, carol, id, c.ID); err != nil {
+		t.Fatal(err)
+	}
+	if s := score(); s != 2 {
+		t.Fatalf("score = %d, want 2", s)
+	}
+	voted, err := e.svc.VotedComments(ctx, bob, id, []int64{c.ID, other.ID})
+	if err != nil || len(voted) != 1 || voted[0] != c.ID {
+		t.Fatalf("bob voted = %v, %v; want [%d]", voted, err, c.ID)
+	}
+
+	for range 2 { // idempotent
+		if err := e.svc.UnvoteComment(ctx, carol, id, c.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if s := score(); s != 1 {
+		t.Fatalf("score after withdrawal = %d, want 1", s)
+	}
+
+	if err := e.d.InTx(ctx, func(tx pgx.Tx) error { return EraseUser(ctx, tx, bob.UserID) }); err != nil {
+		t.Fatal(err)
+	}
+	if s := score(); s != 0 {
+		t.Fatalf("score after the voter's erase = %d, want 0", s)
+	}
+	if n := countRows(t, e.d, "SELECT count(*) FROM comment_vote WHERE user_id = $1", bob.UserID); n != 0 {
+		t.Fatalf("%d votes left after erase", n)
+	}
+}
+
+// Top order puts the most-voted comment first and pages by (score, id) without gaps.
+func TestThreadTopOrder(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	id := e.item()
+	author := testenv.User(t, e.d)
+	voters := []auth.Principal{testenv.User(t, e.d), testenv.User(t, e.d)}
+	var ids []int64
+	for _, body := range []string{"first", "second", "third"} {
+		c, err := e.svc.CreateComment(ctx, author, id, nil, body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, c.ID)
+	}
+	// first: 2 votes, second: 0, third: 1  →  first, third, second
+	for _, v := range voters {
+		if err := e.svc.VoteComment(ctx, v, id, ids[0]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := e.svc.VoteComment(ctx, voters[0], id, ids[2]); err != nil {
+		t.Fatal(err)
+	}
+	var got []int64
+	req := page.Request[TopCursor]{Limit: 1}
+	for {
+		pg, err := e.svc.ThreadTop(ctx, id, req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range pg.Items {
+			got = append(got, c.ID)
+		}
+		if pg.NextCursor == nil {
+			break
+		}
+		last := pg.Items[len(pg.Items)-1]
+		req.Key = &TopCursor{Score: last.Score, ID: last.ID}
+	}
+	want := []int64{ids[0], ids[2], ids[1]}
+	if len(got) != 3 || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
+		t.Fatalf("top order = %v, want %v", got, want)
+	}
+
+	// A deleted root kept for its replies shows no score but keeps its rank, and a page that
+	// ends on it must not skip the comments ranked below it.
+	if _, err := e.svc.CreateComment(ctx, voters[0], id, &ids[0], "reply keeps the root"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.DeleteComment(ctx, author, id, ids[0]); err != nil {
+		t.Fatal(err)
+	}
+	first, err := e.svc.ThreadTop(ctx, id, page.Request[TopCursor]{Limit: 1})
+	if err != nil || len(first.Items) != 1 || first.Items[0].ID != ids[0] || first.Items[0].Score != 0 || first.NextCursor == nil {
+		t.Fatalf("first page = %+v, %v; want the deleted root, score hidden, more to come", first, err)
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(*first.NextCursor)
+	var key TopCursor
+	if err != nil || json.Unmarshal(raw, &key) != nil {
+		t.Fatalf("cursor %q does not decode: %v", *first.NextCursor, err)
+	}
+	rest, err := e.svc.ThreadTop(ctx, id, page.Request[TopCursor]{Limit: 10, Key: &key})
+	if err != nil || len(rest.Items) != 2 || rest.Items[0].ID != ids[2] || rest.Items[1].ID != ids[1] {
+		t.Fatalf("after the deleted root = %+v, %v; want [%d %d]", rest.Items, err, ids[2], ids[1])
+	}
+}
+
+// Parallel votes on one comment (many readers, plus one reader double-clicking) leave the
+// score equal to the number of distinct voters.
+func TestConcurrentVotesKeepScoreExact(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	id := e.item()
+	c, err := e.svc.CreateComment(ctx, testenv.User(t, e.d), id, nil, "popular")
+	if err != nil {
+		t.Fatal(err)
+	}
+	voters := make([]auth.Principal, 20)
+	for i := range voters {
+		voters[i] = testenv.User(t, e.d)
+	}
+	var wg sync.WaitGroup
+	errs := make(chan error, len(voters)*3)
+	for _, v := range voters {
+		for range 3 {
+			wg.Go(func() { errs <- e.svc.VoteComment(ctx, v, id, c.ID) })
+		}
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	var score int32
+	if err := e.d.Primary.QueryRow(ctx, "SELECT score FROM comment WHERE content_id = $1 AND id = $2", id, c.ID).Scan(&score); err != nil {
+		t.Fatal(err)
+	}
+	if score != int32(len(voters)) {
+		t.Fatalf("score = %d, want %d", score, len(voters))
+	}
 }

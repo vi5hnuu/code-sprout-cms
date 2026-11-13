@@ -21,6 +21,7 @@ import (
 	"code-sprout-cms/internal/delivery"
 	"code-sprout-cms/internal/engagement"
 	"code-sprout-cms/internal/judge"
+	"code-sprout-cms/internal/library"
 	"code-sprout-cms/internal/maintenance"
 	"code-sprout-cms/internal/outbox"
 	"code-sprout-cms/internal/platform/config"
@@ -28,6 +29,7 @@ import (
 	"code-sprout-cms/internal/platform/metrics"
 	"code-sprout-cms/internal/platform/storage"
 	"code-sprout-cms/internal/problem"
+	"code-sprout-cms/internal/quiz"
 	"code-sprout-cms/internal/search"
 	"code-sprout-cms/internal/submission"
 	"code-sprout-cms/internal/taxonomy"
@@ -59,7 +61,7 @@ func run() error {
 	defer database.Close()
 
 	// Handlers are registered here as their domains land (search, sitemap, revalidation).
-	dispatcher := outbox.NewDispatcher(database)
+	dispatcher := outbox.NewDispatcher(database, cfg.Worker.OutboxConcurrency)
 	assets := asset.NewService(database, storage.FromConfig(cfg.Storage), asset.ConfigFrom(cfg.Storage))
 	rdb := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr, Password: cfg.RedisPassword})
 	defer rdb.Close()
@@ -74,6 +76,8 @@ func run() error {
 	engagements := engagement.NewService(database, rdb, reader, users, policy)
 	// Registers the PROBLEM publish hooks so scheduled problems publish correctly here too.
 	problems := problem.NewService(database, contents, reader, assets, policy)
+	// Registers the QUIZ publish check, so scheduled quiz publishes are checked like Studio ones.
+	quiz.NewService(database, contents, reader)
 	submissions := submission.NewService(database, rdb, judge.New(cfg.Judge.URL, cfg.Judge.APIKey, cfg.Judge.Runtimes), problems, problems, reader)
 
 	// Outbox consumers: everything outside the database that mirrors content.
@@ -87,7 +91,7 @@ func run() error {
 		RevalidateURL: dc.RevalidateURL, RevalidateSecret: dc.RevalidateSecret,
 		CloudflareZoneID: dc.CloudflareZoneID, CloudflareAPIToken: dc.CloudflareAPIToken,
 		SiteURL: dc.SiteURL, IndexNowKey: dc.IndexNowKey,
-	}, reader, content.NewSitemaps(database, assets)).Register(dispatcher)
+	}, reader, content.NewSitemaps(database, assets), database).Register(dispatcher)
 
 	// Monitoring: event outcomes, queue backlogs and pool use on the worker's internal port.
 	m := metrics.New()
@@ -137,7 +141,7 @@ func run() error {
 	wg.Go(func() { assets.RunVerifier(ctx, 5*time.Second) })
 	wg.Go(func() { contents.RunScheduler(ctx, 30*time.Second) })
 	wg.Go(func() { engagements.RunCounterFlusher(ctx, 30*time.Second) })
-	wg.Go(func() { submissions.RunQueue(ctx, time.Second) })
+	wg.Go(func() { submissions.RunQueue(ctx, time.Second, cfg.Worker.JudgeConcurrency) })
 
 	// Periodic upkeep. Each job is idempotent, so running on several replicas is safe.
 	wg.Go(func() {
@@ -169,6 +173,12 @@ func run() error {
 	wg.Go(func() {
 		maintenance.Every(ctx, "audit-log-prune", 24*time.Hour, func(ctx context.Context) error {
 			return maintenance.PruneAuditLog(ctx, database.Primary)
+		})
+	})
+	wg.Go(func() {
+		// Weekly: the prune scans each partition for year-old positions, so it runs rarely.
+		maintenance.Every(ctx, "reading-prune", 7*24*time.Hour, func(ctx context.Context) error {
+			return library.NewProgress(database, reader).Prune(ctx)
 		})
 	})
 

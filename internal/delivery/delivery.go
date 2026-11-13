@@ -41,15 +41,26 @@ type Sitemaps interface {
 	Refresh(ctx context.Context, t content.Type, contentID int64) error
 }
 
+// Replica answers whether the read replica has caught up with the primary (db.DB implements
+// it). Revalidation makes the web re-read content through the replica, so it must not run
+// before the replica has the change.
+type Replica interface {
+	WaitReplicaCaughtUp(ctx context.Context, timeout time.Duration) error
+}
+
+// replicaWait bounds how long one event waits for the replica before it is retried later.
+const replicaWait = 5 * time.Second
+
 type Service struct {
 	cfg      Config
 	paths    Paths
 	sitemaps Sitemaps
+	replica  Replica
 	http     *http.Client
 }
 
-func NewService(cfg Config, paths Paths, sitemaps Sitemaps) *Service {
-	return &Service{cfg: cfg, paths: paths, sitemaps: sitemaps, http: &http.Client{Timeout: 10 * time.Second}}
+func NewService(cfg Config, paths Paths, sitemaps Sitemaps, replica Replica) *Service {
+	return &Service{cfg: cfg, paths: paths, sitemaps: sitemaps, replica: replica, http: &http.Client{Timeout: 10 * time.Second}}
 }
 
 // Subscriber is where delivery registers its event handlers (the outbox dispatcher).
@@ -68,8 +79,15 @@ func (s *Service) Register(d Subscriber) {
 	d.On(outbox.TopicTagChanged, func(ctx context.Context, _ outbox.Event) error {
 		return s.invalidate(ctx, "tags", "listings")
 	})
+	// A thread is read live through the web server's proxy (never from the Next.js data cache),
+	// so the only stale copy a comment can leave behind is the CDN's; the Next.js call is
+	// skipped. Comments are the most frequent event by far, and the dispatcher coalesces a burst
+	// on one thread into a single purge.
 	d.On(outbox.TopicCommentsChanged, func(ctx context.Context, e outbox.Event) error {
-		return s.invalidate(ctx, "comments:"+strconv.FormatInt(e.AggregateID, 10))
+		if err := s.replica.WaitReplicaCaughtUp(ctx, replicaWait); err != nil {
+			return err
+		}
+		return s.purgeCDN(ctx, []string{"comments:" + strconv.FormatInt(e.AggregateID, 10)})
 	})
 }
 
@@ -79,6 +97,12 @@ func (s *Service) contentChanged(ctx context.Context, e outbox.Event) error {
 		return err
 	}
 	if err := s.sitemaps.Refresh(ctx, content.Type(ev.Type), e.AggregateID); err != nil {
+		return err
+	}
+	// Everything below makes readers (and the web's re-render) re-read this content from the
+	// replica; a lagging replica would re-cache the old version until the next publish. The
+	// same guard precedes every other purge below, for the same reason.
+	if err := s.replica.WaitReplicaCaughtUp(ctx, replicaWait); err != nil {
 		return err
 	}
 	path, ok, err := s.paths.PathOf(ctx, e.AggregateID)
@@ -101,27 +125,54 @@ func (s *Service) contentChanged(ctx context.Context, e outbox.Event) error {
 	return s.indexNow(ctx, paths)
 }
 
-// invalidate drops cached responses carrying these tags in Next.js and at the CDN.
+// invalidate drops cached responses carrying these tags in Next.js and at the CDN, once the
+// replica they will be re-read from has the change.
 func (s *Service) invalidate(ctx context.Context, tags ...string) error {
+	if err := s.replica.WaitReplicaCaughtUp(ctx, replicaWait); err != nil {
+		return err
+	}
 	return s.refresh(ctx, nil, tags...)
 }
 
 // refresh revalidates pages by path and data by tag in Next.js, and purges the tags at the CDN.
 func (s *Service) refresh(ctx context.Context, paths []string, tags ...string) error {
-	if s.cfg.RevalidateURL != "" {
-		if err := s.post(ctx, s.cfg.RevalidateURL, map[string]any{"tags": tags, "paths": paths},
-			map[string]string{"X-Revalidate-Secret": s.cfg.RevalidateSecret}); err != nil {
-			return fmt.Errorf("revalidate: %w", err)
-		}
+	if err := s.revalidateWeb(ctx, paths, tags); err != nil {
+		return err
 	}
-	if s.cfg.CloudflareZoneID != "" {
-		endpoint := "https://api.cloudflare.com/client/v4/zones/" + url.PathEscape(s.cfg.CloudflareZoneID) + "/purge_cache"
-		if err := s.post(ctx, endpoint, map[string]any{"tags": tags},
-			map[string]string{"Authorization": "Bearer " + s.cfg.CloudflareAPIToken}); err != nil {
-			return fmt.Errorf("cdn purge: %w", err)
-		}
+	return s.purgeCDN(ctx, tags)
+}
+
+// revalidateWeb asks the Next.js app to drop its cached pages (by path) and data (by tag).
+func (s *Service) revalidateWeb(ctx context.Context, paths, tags []string) error {
+	if s.cfg.RevalidateURL == "" {
+		return nil
+	}
+	// Always arrays: a nil slice marshals as JSON null, which the endpoint rejects.
+	if err := s.post(ctx, s.cfg.RevalidateURL, map[string]any{"tags": nonNil(tags), "paths": nonNil(paths)},
+		map[string]string{"X-Revalidate-Secret": s.cfg.RevalidateSecret}); err != nil {
+		return fmt.Errorf("revalidate: %w", err)
 	}
 	return nil
+}
+
+// purgeCDN drops every CDN-cached API response carrying one of the tags (Cache-Tag header).
+func (s *Service) purgeCDN(ctx context.Context, tags []string) error {
+	if s.cfg.CloudflareZoneID == "" || len(tags) == 0 {
+		return nil
+	}
+	endpoint := "https://api.cloudflare.com/client/v4/zones/" + url.PathEscape(s.cfg.CloudflareZoneID) + "/purge_cache"
+	if err := s.post(ctx, endpoint, map[string]any{"tags": tags},
+		map[string]string{"Authorization": "Bearer " + s.cfg.CloudflareAPIToken}); err != nil {
+		return fmt.Errorf("cdn purge: %w", err)
+	}
+	return nil
+}
+
+func nonNil(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }
 
 // indexNow tells Bing, Yandex and other IndexNow engines that these URLs changed. (Google does

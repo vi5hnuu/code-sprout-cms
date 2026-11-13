@@ -54,7 +54,7 @@ DELETE FROM bookmark WHERE user_id = $1 AND content_id = $2;
 -- bookmark_user_stats_sync trigger. O(1) instead of O(rows). COALESCE handles the rare case
 -- of a user whose first-ever bookmark hasn't yet inserted (no row in user_stats yet).
 -- name: CountUserBookmarks :one
-SELECT COALESCE((SELECT bookmark_count::bigint FROM user_stats WHERE user_id = $1), 0::bigint);
+SELECT COALESCE((SELECT bookmark_count FROM user_stats WHERE user_id = $1), 0)::bigint AS bookmark_count;
 
 -- name: BookmarkStates :many
 SELECT content_id, list_id FROM bookmark WHERE user_id = sqlc.arg(user_id) AND content_id = ANY (sqlc.arg(ids)::bigint[]);
@@ -113,6 +113,16 @@ WHERE content_id = sqlc.arg(content_id) AND root_id IS NULL
   AND (sqlc.narg(after_created)::timestamptz IS NULL
        OR (created_at, id) < (sqlc.narg(after_created)::timestamptz, sqlc.narg(after_id)::bigint))
 ORDER BY created_at DESC, id DESC
+LIMIT sqlc.arg(row_limit);
+
+-- Same rows as ListRootComments, most-voted first (idx_comment_roots_top).
+-- name: ListRootCommentsTop :many
+SELECT * FROM comment
+WHERE content_id = sqlc.arg(content_id) AND root_id IS NULL
+  AND (status = 'VISIBLE' OR (status = 'DELETED' AND reply_count > 0))
+  AND (sqlc.narg(after_score)::int IS NULL
+       OR (score, id) < (sqlc.narg(after_score)::int, sqlc.narg(after_id)::bigint))
+ORDER BY score DESC, id DESC
 LIMIT sqlc.arg(row_limit);
 
 -- name: ListReplies :many
@@ -179,3 +189,33 @@ SET status = 'DELETED', body_md = '[deleted]', edited_at = NULL
 FROM old
 WHERE c.content_id = old.content_id AND c.id = old.id
 RETURNING old.content_id, old.root_id, old.status AS old_status;
+
+-- ── Comment votes ───────────────────────────────────────────────────────────
+
+-- name: InsertCommentVote :execrows
+INSERT INTO comment_vote (content_id, user_id, comment_id)
+VALUES (sqlc.arg(content_id), sqlc.arg(user_id), sqlc.arg(comment_id))
+ON CONFLICT DO NOTHING;
+
+-- name: DeleteCommentVote :execrows
+DELETE FROM comment_vote
+WHERE content_id = sqlc.arg(content_id) AND user_id = sqlc.arg(user_id) AND comment_id = sqlc.arg(comment_id);
+
+-- name: BumpCommentScore :exec
+UPDATE comment SET score = score + sqlc.arg(delta)
+WHERE content_id = sqlc.arg(content_id) AND id = sqlc.arg(id);
+
+-- name: VotedCommentIDs :many
+SELECT comment_id FROM comment_vote
+WHERE content_id = sqlc.arg(content_id) AND user_id = sqlc.arg(user_id)
+  AND comment_id = ANY (sqlc.arg(ids)::bigint[]);
+
+-- Account erase: the reader's votes go, and each comment they voted for loses one point (the
+-- key allows one vote per reader per comment, so each comment appears once).
+-- name: DeleteUserCommentVotes :exec
+WITH gone AS (
+    DELETE FROM comment_vote WHERE user_id = $1 RETURNING content_id, comment_id
+)
+UPDATE comment c SET score = c.score - 1
+FROM gone
+WHERE c.content_id = gone.content_id AND c.id = gone.comment_id;

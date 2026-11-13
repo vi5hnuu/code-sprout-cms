@@ -23,5 +23,6 @@
   "snippets": [],
   "assetIds": [],
   "problemSlugs": [],
+  "quizIds": [],
   "plainText": "Nesting\nOuter\nInner callout.\nStill inside the outer block.\nStill inside the callout.\nLevel 1\nLevel 2\nLevel 3\n1\n2\n3\n4 is too deep\ndeep"
 }

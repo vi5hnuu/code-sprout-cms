@@ -10,7 +10,7 @@ ON CONFLICT (auth_sub) DO NOTHING
 RETURNING id;
 
 -- name: GetUser :one
-SELECT id, handle, display_name, bio, avatar_file_id, created_at
+SELECT id, handle, display_name, bio, avatar_file_id, ui_locale, created_at
 FROM app_user
 WHERE id = $1;
 
@@ -33,12 +33,17 @@ SET handle = sqlc.narg(handle), display_name = sqlc.arg(display_name), bio = sql
 WHERE id = sqlc.arg(id)
 RETURNING id, handle, display_name, bio, avatar_file_id, created_at;
 
+-- The reader's interface language; NULL clears the choice.
+-- name: SetUILocale :exec
+UPDATE app_user SET ui_locale = sqlc.narg(ui_locale), updated_at = now()
+WHERE id = sqlc.arg(id);
+
 -- Account erase: the row stays for references (authored pages, audit) but keeps nothing
 -- personal. The auth subject is replaced so a returning sign-in provisions a fresh account.
 -- name: AnonymizeUser :exec
 UPDATE app_user
 SET auth_sub = 'erased:' || id, handle = NULL, display_name = 'Former member', bio = NULL,
-    avatar_file_id = NULL, deleted_at = now(), updated_at = now()
+    avatar_file_id = NULL, ui_locale = NULL, deleted_at = now(), updated_at = now()
 WHERE id = $1;
 
 -- Final step of account erase: drop the user_stats row. By the time this runs, bookmark /

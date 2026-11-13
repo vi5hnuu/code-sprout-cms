@@ -140,32 +140,41 @@ func (s *Service) applyBatch(ctx context.Context, key string) error {
 	}
 	// Hits on ids that are not live (typos, deleted pages, crafted requests) are dropped here
 	// rather than checked per request, keeping the hot path a single Redis round trip. A busy
-	// interval can hold many ids, so they are checked in bounded chunks.
-	live := make([]int64, 0, len(ids))
+	// interval can hold many ids, so the batch is applied in bounded chunks, each its own short
+	// transaction: one giant transaction over every item viewed in the interval would hold row
+	// locks on the hottest rows for its whole duration. Once a chunk is stored its deltas are
+	// removed from the hash, so a failure in a later chunk (and the retry it causes) cannot
+	// count them twice.
 	for chunk := range slices.Chunk(ids, reconcileBatch) {
-		got, err := s.content.LiveIDs(ctx, chunk)
+		live, err := s.content.LiveIDs(ctx, chunk)
 		if err != nil {
 			return err
 		}
-		live = append(live, got...)
-	}
-	err = s.db.InTx(ctx, func(tx pgx.Tx) error {
-		q := engagementdb.New(tx)
-		for _, id := range live {
-			d := deltas{}
-			if counter(kind) == counterViews {
-				d.views = pending[id]
-			} else {
-				d.shares = pending[id]
+		err = s.db.InTx(ctx, func(tx pgx.Tx) error {
+			q := engagementdb.New(tx)
+			for _, id := range live {
+				d := deltas{}
+				if counter(kind) == counterViews {
+					d.views = pending[id]
+				} else {
+					d.shares = pending[id]
+				}
+				if err := applyDeltas(ctx, q, id, d); err != nil {
+					return err
+				}
 			}
-			if err := applyDeltas(ctx, q, id, d); err != nil {
-				return err
-			}
+			return nil
+		})
+		if err != nil {
+			return err
 		}
-		return nil
-	})
-	if err != nil {
-		return err
+		fields := make([]string, len(chunk))
+		for i, id := range chunk {
+			fields[i] = strconv.FormatInt(id, 10)
+		}
+		if err := s.rdb.HDel(ctx, key, fields...).Err(); err != nil {
+			return err
+		}
 	}
 	pipe := s.rdb.TxPipeline()
 	pipe.Del(ctx, key)

@@ -628,15 +628,17 @@ const listAuthorContent = `-- name: ListAuthorContent :many
 SELECT id, type, locale, slug, title, summary, status, review_state, visibility, access, author_id, primary_category_id, last_rev_no, draft_rev_no, published_rev_no, scheduled_at, published_at, last_published_at, translation_group_id, created_at, updated_at, deleted_at FROM content
 WHERE author_id = $1 AND deleted_at IS NULL
   AND ($2::text IS NULL OR type = $2::text)
-  AND ($3::timestamptz IS NULL
-       OR (updated_at, id) < ($3::timestamptz, $4::bigint))
+  AND ($3::text IS NULL OR status = $3::text)
+  AND ($4::timestamptz IS NULL
+       OR (updated_at, id) < ($4::timestamptz, $5::bigint))
 ORDER BY updated_at DESC, id DESC
-LIMIT $5
+LIMIT $6
 `
 
 type ListAuthorContentParams struct {
 	AuthorID     int64
 	TypeFilter   *string
+	StatusFilter *string
 	AfterUpdated *time.Time
 	AfterID      *int64
 	RowLimit     int32
@@ -647,6 +649,7 @@ func (q *Queries) ListAuthorContent(ctx context.Context, arg ListAuthorContentPa
 	rows, err := q.db.Query(ctx, listAuthorContent,
 		arg.AuthorID,
 		arg.TypeFilter,
+		arg.StatusFilter,
 		arg.AfterUpdated,
 		arg.AfterID,
 		arg.RowLimit,
@@ -1876,6 +1879,37 @@ func (q *Queries) LiveIDsBySlug(ctx context.Context, arg LiveIDsBySlugParams) ([
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const liveIDsOfType = `-- name: LiveIDsOfType :many
+SELECT id FROM content
+WHERE type = $1 AND id = ANY ($2::bigint[]) AND status = 'PUBLISHED' AND deleted_at IS NULL
+`
+
+type LiveIDsOfTypeParams struct {
+	Type string
+	Ids  []int64
+}
+
+// Which of these ids are published items of this type (embedded quizzes at publish time).
+func (q *Queries) LiveIDsOfType(ctx context.Context, arg LiveIDsOfTypeParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, liveIDsOfType, arg.Type, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

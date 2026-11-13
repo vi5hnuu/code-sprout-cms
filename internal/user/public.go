@@ -33,6 +33,26 @@ type UpdateProfile struct {
 	AvatarFileID *int64  `json:"avatarFileId"`
 }
 
+// Preferences are the reader's settings that are not part of their public profile.
+type Preferences struct {
+	// UILocale is the interface language, e.g. "hi"; nil clears the choice. The API checks the
+	// format only: which languages the interface ships in is the web's concern.
+	UILocale *string `json:"uiLocale"`
+}
+
+var uiLocalePattern = regexp.MustCompile(`^[a-z]{2}(-[A-Z]{2})?$`)
+
+// SetPreferences saves the reader's preferences and returns their profile.
+func (s *Service) SetPreferences(ctx context.Context, id int64, in Preferences) (Profile, error) {
+	if in.UILocale != nil && !uiLocalePattern.MatchString(*in.UILocale) {
+		return Profile{}, apperr.ValidationFailed(map[string]string{"uiLocale": "Use a language code such as en or hi."})
+	}
+	if err := s.q.SetUILocale(ctx, userdb.SetUILocaleParams{ID: id, UiLocale: in.UILocale}); err != nil {
+		return Profile{}, err
+	}
+	return s.Profile(ctx, id)
+}
+
 var handlePattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9_-]{1,28}[a-z0-9])?$`)
 
 // Handles that would shadow site routes or impersonate staff.

@@ -131,3 +131,55 @@ func TestUpdateProfile(t *testing.T) {
 		t.Fatalf("by handle = %+v, %v", pub, err)
 	}
 }
+
+func TestSetPreferences(t *testing.T) {
+	d := testenv.DB(t)
+	svc := NewService(d.Primary, d.Replica, nil)
+	ctx := context.Background()
+	id, err := svc.ResolveID(ctx, uniqueSub(t), "Asha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p, err := svc.Profile(ctx, id); err != nil || p.UILocale != nil {
+		t.Fatalf("a new reader has no interface language yet: %+v, %v", p.UILocale, err)
+	}
+
+	hi := "hi"
+	p, err := svc.SetPreferences(ctx, id, Preferences{UILocale: &hi})
+	if err != nil || p.UILocale == nil || *p.UILocale != "hi" {
+		t.Fatalf("set: %+v, %v", p.UILocale, err)
+	}
+
+	for _, bad := range []string{"Hindi", "HI", "h", "hi_IN", ""} {
+		_, err := svc.SetPreferences(ctx, id, Preferences{UILocale: &bad})
+		if e, ok := apperr.As(err); !ok || e.Kind != apperr.KindInvalid {
+			t.Fatalf("%q should be refused, err = %v", bad, err)
+		}
+	}
+	if p, _ := svc.Profile(ctx, id); p.UILocale == nil || *p.UILocale != "hi" {
+		t.Fatalf("a refused value must not overwrite the saved one: %+v", p.UILocale)
+	}
+
+	if p, err := svc.SetPreferences(ctx, id, Preferences{}); err != nil || p.UILocale != nil {
+		t.Fatalf("nil clears the choice: %+v, %v", p.UILocale, err)
+	}
+
+	// Erasing the account forgets the preference with everything else personal.
+	if _, err := svc.SetPreferences(ctx, id, Preferences{UILocale: &hi}); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := d.Primary.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.EraseUser(ctx, tx, id); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var stored *string
+	if err := d.Primary.QueryRow(ctx, "SELECT ui_locale FROM app_user WHERE id = $1", id).Scan(&stored); err != nil || stored != nil {
+		t.Fatalf("erase must clear ui_locale: %v, %v", stored, err)
+	}
+}

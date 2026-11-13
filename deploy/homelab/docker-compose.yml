@@ -43,12 +43,25 @@ services:
     <<: *service
     image: postgres:17-alpine
     # POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB come from env_file.
+    # WAL archiving is the step from "daily dump" to point-in-time recovery: with
+    # PG_ARCHIVE_MODE=on every finished WAL segment is copied to the archive volume (and a
+    # partly-filled one every PG_ARCHIVE_TIMEOUT seconds, which bounds what a disk loss can
+    # cost), so backup.sh's base backup plus the archive can restore to any moment, not just
+    # last night. Off by default: turning it on needs the archive directory (setup.sh creates
+    # it) and a Postgres restart (archive_mode is not reloadable), so flip it deliberately.
+    # The timeout is a separate knob only because Postgres forces the segment switch whether
+    # or not archiving is on; it belongs at 0 when the mode is off. See backup.sh for restore.
     command: >
       postgres
         -c shared_preload_libraries=pg_stat_statements
         -c pg_stat_statements.track=all
         -c max_connections=300
-    volumes: ["/var/lib/code-sprout-cms/postgres:/var/lib/postgresql/data"]
+        -c archive_mode=${PG_ARCHIVE_MODE:-off}
+        -c archive_timeout=${PG_ARCHIVE_TIMEOUT:-0}
+        -c "archive_command=test ! -f /var/lib/postgresql/wal_archive/%f && cp %p /var/lib/postgresql/wal_archive/%f"
+    volumes:
+      - "/var/lib/code-sprout-cms/postgres:/var/lib/postgresql/data"
+      - "/var/lib/code-sprout-cms/wal_archive:/var/lib/postgresql/wal_archive"
     ports: ["127.0.0.1:${POSTGRES_PORT:-5442}:5432"]
     shm_size: 256m
     mem_limit: 1g
@@ -141,6 +154,10 @@ services:
       network: host
       args:
         CMS_API_URL: ${WEB_BUILD_API_URL:-http://127.0.0.1:4411}
+        # ls-judge runs under systemd on the host (see /etc/systemd/system/ls-judge.service)
+        # on 127.0.0.1:8090. Reachable at build time because the web stage builds with
+        # `network: host`; at runtime the web container reaches it via host.docker.internal.
+        LS_JUDGE_API_URL: ${WEB_BUILD_JUDGE_URL:-http://127.0.0.1:8090}
         NEXT_PUBLIC_SITE_URL: ${PUBLIC_SCHEME:-https}://${SITE_DOMAIN:?set SITE_DOMAIN in ./env}
         NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
         NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:-}
@@ -154,6 +171,8 @@ services:
     # prod.env via env_file above.
     environment:
       CMS_API_URL: http://api:9300
+      # ls-judge lives on the host (code execution + contests), same gateway as auth.
+      LS_JUDGE_API_URL: http://host.docker.internal:8090
       AUTH_URL: http://host.docker.internal:8081
       AUTH_AUDIENCE: code-sprout-cms
       CLIENT_IP_HEADER: x-real-ip

@@ -9,6 +9,7 @@ package submission
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"slices"
 	"time"
@@ -241,9 +242,12 @@ type ProblemState struct {
 }
 
 // States answers attempted/solved for up to 100 problems (problem lists show a tick).
+// maxStateIDs bounds one problem-state request (a page of problems).
+const maxStateIDs = 100
+
 func (s *Service) States(ctx context.Context, p auth.Principal, ids []int64) (map[int64]ProblemState, error) {
-	if len(ids) > 100 {
-		return nil, apperr.ValidationFailed(map[string]string{"ids": "At most 100 ids."})
+	if len(ids) > maxStateIDs {
+		return nil, apperr.ValidationFailed(map[string]string{"ids": fmt.Sprintf("At most %d ids.", maxStateIDs)})
 	}
 	out := make(map[int64]ProblemState, len(ids))
 	for _, id := range ids {

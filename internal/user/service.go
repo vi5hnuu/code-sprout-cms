@@ -30,7 +30,10 @@ type Profile struct {
 	Bio          *string `json:"bio"`
 	AvatarFileID *int64  `json:"avatarFileId"`
 	// AvatarURL is the picture's public address, so clients never look the file up themselves.
-	AvatarURL *string     `json:"avatarUrl"`
+	AvatarURL *string `json:"avatarUrl"`
+	// UILocale is the reader's interface language, saved so it follows them to every device;
+	// nil until they choose one.
+	UILocale  *string     `json:"uiLocale"`
 	CreatedAt time.Time   `json:"createdAt"`
 	Roles     []RoleGrant `json:"roles"`
 }
@@ -104,6 +107,7 @@ func (s *Service) Profile(ctx context.Context, id int64) (Profile, error) {
 		Bio:          u.Bio,
 		AvatarFileID: u.AvatarFileID,
 		AvatarURL:    avatarURL,
+		UILocale:     u.UiLocale,
 		CreatedAt:    u.CreatedAt,
 		Roles:        roles,
 	}, nil
