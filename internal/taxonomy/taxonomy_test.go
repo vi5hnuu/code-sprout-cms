@@ -236,7 +236,8 @@ func TestReservedRootSlugs(t *testing.T) {
 	svc := NewService(d, access.NewPolicy(d.Primary))
 	ctx := context.Background()
 	admin := testenv.Admin(t, d)
-	for _, slug := range []string{"videos", "shorts", "blog", "interview"} {
+	// Site routes, and content-language prefixes (/hi/… is where Hindi pages live).
+	for _, slug := range []string{"videos", "shorts", "blog", "interview", "en", "hi"} {
 		if _, err := svc.Create(ctx, admin, CreateCategory{Slug: slug, Name: slug}); err == nil {
 			t.Fatalf("root category %q accepted", slug)
 		}

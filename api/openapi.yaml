@@ -759,6 +759,29 @@ paths:
         "400": { $ref: "#/components/responses/Problem" }
         "401": { $ref: "#/components/responses/Problem" }
         "409": { $ref: "#/components/responses/Problem" }
+  /v1/me/preferences:
+    put:
+      tags: [me]
+      operationId: setPreferences
+      summary: Save the reader's preferences (interface language).
+      description: >-
+        Settings that are not part of the public profile, saved on the account so they follow
+        the reader to every device. The interface language is checked for format only; which
+        languages the interface ships in is the client's concern.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Preferences" }
+      responses:
+        "200":
+          description: The reader, with the saved preferences
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Me" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
   /v1/public/users/{handle}:
     get:
       tags: [content]
@@ -2547,7 +2570,7 @@ components:
 
     Me:
       type: object
-      required: [id, handle, displayName, bio, avatarFileId, avatarUrl, createdAt, roles, isAdmin, isGuest]
+      required: [id, handle, displayName, bio, avatarFileId, avatarUrl, uiLocale, createdAt, roles, isAdmin, isGuest]
       properties:
         id: { type: integer, format: int64 }
         handle: { type: [string, "null"], description: "Public profile handle, used in /u/{handle}." }
@@ -2555,6 +2578,7 @@ components:
         bio: { type: [string, "null"] }
         avatarFileId: { type: [integer, "null"], format: int64 }
         avatarUrl: { type: [string, "null"], description: "Public URL of the avatar picture." }
+        uiLocale: { type: [string, "null"], description: "Interface language the reader chose (e.g. hi); null until they choose." }
         createdAt: { type: string, format: date-time }
         roles:
           type: array
@@ -2939,6 +2963,11 @@ components:
         displayName: { type: string, maxLength: 60 }
         bio: { type: [string, "null"], maxLength: 300 }
         avatarFileId: { type: [integer, "null"], format: int64, description: A READY upload with purpose AVATAR. }
+    Preferences:
+      type: object
+      additionalProperties: false
+      properties:
+        uiLocale: { type: [string, "null"], pattern: "^[a-z]{2}(-[A-Z]{2})?$", description: "Interface language; null clears the choice." }
     PublicUser:
       type: object
       required: [id, handle, displayName, bio, avatarUrl]
